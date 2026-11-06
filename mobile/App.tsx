@@ -45,6 +45,7 @@ type Screen =
   | "loading"
   | "profile"
   | "home"
+  | "aboutIitJ"
   | "busSchedule"
   | "classroom"
   | "error";
@@ -1564,9 +1565,34 @@ function AppContent() {
     );
   }
 
-  // ------------------------------------------------
-  // 18. HOME DASHBOARD
-  // ------------------------------------------------
+  if (screen === "aboutIitJ") {
+    return (
+      <SafeAreaView style={styles.container}>
+        <StatusBar barStyle="dark-content" />
+        <ScrollView contentContainerStyle={styles.busScreenContent}>
+          <View style={styles.busHeader}>
+            <Pressable
+              style={styles.backButton}
+              onPress={() => setScreen("home")}
+              accessibilityRole="button"
+              accessibilityLabel="Back to home"
+            >
+              <Text style={styles.backButtonText}>← Back</Text>
+            </Pressable>
+            <Text style={styles.logo}>EAOP.</Text>
+          </View>
+
+          <Pressable style={styles.featureCard} accessibilityRole="button">
+            <Text style={styles.featureTitle}>Student Gymkhana</Text>
+          </Pressable>
+
+          <Pressable style={styles.featureCard} accessibilityRole="button">
+            <Text style={styles.featureTitle}>Campus Fests</Text>
+          </Pressable>
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container}>
@@ -1654,14 +1680,18 @@ function AppContent() {
           <Text style={styles.comingSoon}>OPEN CLASSROOM →</Text>
         </Pressable>
 
-        <View style={styles.featureCard}>
+        <Pressable
+          style={styles.featureCard}
+          onPress={() => setScreen("aboutIitJ")}
+          accessibilityRole="button"
+        >
           <Text style={styles.featureNumber}>03</Text>
-          <Text style={styles.featureTitle}>Campus Activities</Text>
+          <Text style={styles.featureTitle}>About IIT J</Text>
           <Text style={styles.featureDescription}>
-            Keep track of your college life in one place.
+            Everything about college student structure, at one place
           </Text>
-          <Text style={styles.comingSoon}>COMING NEXT</Text>
-        </View>
+          <Text style={styles.comingSoon}>UNDERSTAND CAMPUS →</Text>
+        </Pressable>
 
         <Text style={styles.footerText}>
           MADE FOR STUDENTS, BY STUDENTS.
