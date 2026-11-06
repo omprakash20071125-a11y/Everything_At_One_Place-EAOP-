@@ -5,7 +5,11 @@ class Settings(BaseSettings):
 
     DATABASE_URL: str
     SUPABASE_URL: str
-
+    GOOGLE_CLIENT_ID: str | None = None
+    GOOGLE_CLIENT_SECRET: str | None = None
+    GOOGLE_REDIRECT_URI: str | None = None
+    GOOGLE_TOKEN_ENCRYPTION_KEY: str | None = None
+    
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

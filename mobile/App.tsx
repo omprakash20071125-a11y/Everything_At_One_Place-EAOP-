@@ -4,6 +4,7 @@ import {
   ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
+  Linking,
   Platform,
   Pressable,
   ScrollView,
@@ -14,7 +15,10 @@ import {
   View,
 } from "react-native";
 
-import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
+import {
+  SafeAreaProvider,
+  SafeAreaView,
+} from "react-native-safe-area-context";
 
 import type { Session } from "@supabase/supabase-js";
 
@@ -42,6 +46,7 @@ type Screen =
   | "profile"
   | "home"
   | "busSchedule"
+  | "classroom"
   | "error";
 
 type BusDay = "MON" | "TUE" | "WED" | "THU" | "FRI" | "SAT" | "SUN";
@@ -58,6 +63,39 @@ type BusTrip = {
   source_page: number;
 };
 
+type ClassroomStatus = {
+  connected: boolean;
+  google_email: string | null;
+  connected_at: string | null;
+  scopes: string[];
+};
+
+type ClassroomCourse = {
+  id: string;
+  name: string | null;
+  section: string | null;
+  description: string | null;
+  room: string | null;
+  owner_id: string | null;
+  course_state: string | null;
+  alternate_link: string | null;
+};
+
+type ClassroomAssignment = {
+  id: string;
+  course_id: string;
+  title: string | null;
+  description: string | null;
+  state: string | null;
+  work_type: string | null;
+  due_date: string | null;
+  due_time: string | null;
+  max_points: number | null;
+  alternate_link: string | null;
+  creation_time: string | null;
+  update_time: string | null;
+};
+
 const BUS_DAYS: { label: string; value: BusDay }[] = [
   { label: "MON", value: "MON" },
   { label: "TUE", value: "TUE" },
@@ -67,6 +105,13 @@ const BUS_DAYS: { label: string; value: BusDay }[] = [
   { label: "SAT", value: "SAT" },
   { label: "SUN", value: "SUN" },
 ];
+
+const EMPTY_CLASSROOM_STATUS: ClassroomStatus = {
+  connected: false,
+  google_email: null,
+  connected_at: null,
+  scopes: [],
+};
 
 function getTodayBusDay(): BusDay {
   const days: BusDay[] = [
@@ -83,8 +128,6 @@ function getTodayBusDay(): BusDay {
 }
 
 function formatBusTime(value: string): string {
-  // PostgreSQL TIME is normally returned as HH:MM:SS.
-  // This also supports HH:MM.
   const [hoursPart, minutesPart] = value.split(":");
   const hours = Number(hoursPart);
 
@@ -98,8 +141,20 @@ function formatBusTime(value: string): string {
   return `${displayHours}:${minutesPart.slice(0, 2)} ${period}`;
 }
 
+function formatDueDate(date: string | null, time: string | null): string {
+  if (!date) return "No due date";
+
+  const parsed = new Date(`${date}T${time || "23:59:00"}`);
+  if (Number.isNaN(parsed.getTime())) return date;
+
+  return parsed.toLocaleString([], {
+    dateStyle: "medium",
+    timeStyle: time ? "short" : undefined,
+  });
+}
+
 // ------------------------------------------------
-// APP
+// APP CONTENT
 // ------------------------------------------------
 
 function AppContent() {
@@ -121,8 +176,6 @@ function AppContent() {
   const [branch, setBranch] = useState("");
   const [semester, setSemester] = useState<number | null>(null);
   const [bio, setBio] = useState("");
-
-  // Saved profile
   const [profile, setProfile] = useState<Profile | null>(null);
 
   // Bus schedule state
@@ -132,10 +185,66 @@ function AppContent() {
   const [busError, setBusError] = useState("");
   const [busRefreshKey, setBusRefreshKey] = useState(0);
 
+  // Google Classroom state
+  const [classroomStatus, setClassroomStatus] =
+    useState<ClassroomStatus>(EMPTY_CLASSROOM_STATUS);
+  const [classroomCourses, setClassroomCourses] =
+    useState<ClassroomCourse[]>([]);
+  const [selectedCourse, setSelectedCourse] =
+    useState<ClassroomCourse | null>(null);
+  const [classroomAssignments, setClassroomAssignments] =
+    useState<ClassroomAssignment[]>([]);
+  const [classroomLoading, setClassroomLoading] = useState(false);
+  const [classroomActionLoading, setClassroomActionLoading] = useState(false);
+  const [assignmentsLoading, setAssignmentsLoading] = useState(false);
+  const [classroomError, setClassroomError] = useState("");
+  const [classroomNotice, setClassroomNotice] = useState("");
+
+  // ------------------------------------------------
+  // SHARED CLASSROOM API REQUEST
+  // ------------------------------------------------
+
+  async function classroomRequest<T>(
+    path: string,
+    method: "GET" | "POST" | "DELETE" = "GET"
+  ): Promise<T> {
+    if (!API_URL) {
+      throw new Error("Backend API URL is missing.");
+    }
+
+    if (!session) {
+      throw new Error("Please sign in to EAOP first.");
+    }
+
+    const response = await fetch(
+      `${API_URL}/api/v1/classroom${path}`,
+      {
+        method,
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+      }
+    );
+
+    const result: unknown = await response.json().catch(() => null);
+
+    if (!response.ok) {
+      const detail =
+        typeof result === "object" &&
+        result !== null &&
+        "detail" in result
+          ? String(result.detail)
+          : `Classroom request failed (${response.status}).`;
+
+      throw new Error(detail);
+    }
+
+    return result as T;
+  }
+
   // ------------------------------------------------
   // 1. CHECK AUTHENTICATION SESSION
   // ------------------------------------------------
-
   useEffect(() => {
     let mounted = true;
 
@@ -203,13 +312,17 @@ function AppContent() {
           return;
         }
 
-        const result = await response.json();
+        const result: unknown = await response.json();
 
         if (!response.ok) {
-          throw new Error(result.detail || "Unable to fetch profile.");
+          const detail =
+            typeof result === "object" && result !== null && "detail" in result
+              ? String(result.detail)
+              : "Unable to fetch profile.";
+          throw new Error(detail);
         }
 
-        setProfile(result);
+        setProfile(result as Profile);
         setScreen("home");
       } catch (error) {
         if (!mounted) return;
@@ -233,9 +346,7 @@ function AppContent() {
   // ------------------------------------------------
 
   useEffect(() => {
-    if (screen !== "busSchedule") {
-      return;
-    }
+    if (screen !== "busSchedule") return;
 
     let mounted = true;
 
@@ -271,7 +382,6 @@ function AppContent() {
         }
 
         if (!mounted) return;
-
         setBusTrips(result as BusTrip[]);
       } catch (error) {
         if (!mounted) return;
@@ -280,9 +390,7 @@ function AppContent() {
           error instanceof Error ? error.message : "Something went wrong."
         );
       } finally {
-        if (mounted) {
-          setBusLoading(false);
-        }
+        if (mounted) setBusLoading(false);
       }
     }
 
@@ -294,7 +402,250 @@ function AppContent() {
   }, [screen, selectedBusDay, busRefreshKey]);
 
   // ------------------------------------------------
-  // 4. LOGIN / SIGNUP
+  // 4. LOAD GOOGLE CLASSROOM STATUS AND COURSES
+  // ------------------------------------------------
+
+  async function refreshClassroom() {
+    const currentSession = session;
+    if (!currentSession) return;
+
+    setClassroomLoading(true);
+    setClassroomError("");
+    setClassroomNotice("");
+
+    try {
+      const status = await classroomRequest<ClassroomStatus>("/status");
+      setClassroomStatus(status);
+
+      const expectedEmail = currentSession.user.email?.trim().toLowerCase();
+      const connectedEmail = status.google_email?.trim().toLowerCase();
+
+      if (
+        status.connected &&
+        expectedEmail &&
+        connectedEmail &&
+        connectedEmail !== expectedEmail
+      ) {
+        setClassroomCourses([]);
+        setSelectedCourse(null);
+        setClassroomAssignments([]);
+        throw new Error(
+          `Google Classroom is connected as ${status.google_email}, but your EAOP account is ${currentSession.user.email}. Disconnect the Google account and reconnect using the EAOP email.`
+        );
+      }
+
+      if (status.connected) {
+        const courses = await classroomRequest<ClassroomCourse[]>("/courses");
+        setClassroomCourses(courses);
+      } else {
+        setClassroomCourses([]);
+        setSelectedCourse(null);
+        setClassroomAssignments([]);
+      }
+    } catch (error) {
+      setClassroomError(
+        error instanceof Error ? error.message : "Unable to load Google Classroom."
+      );
+    } finally {
+      setClassroomLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (screen !== "classroom" || !session) return;
+
+    const currentSession = session;
+    let mounted = true;
+
+    async function loadClassroom() {
+      setClassroomLoading(true);
+      setClassroomError("");
+
+      try {
+        const status = await classroomRequest<ClassroomStatus>("/status");
+        if (!mounted) return;
+
+        setClassroomStatus(status);
+
+        const expectedEmail = currentSession.user.email?.trim().toLowerCase();
+        const connectedEmail = status.google_email?.trim().toLowerCase();
+
+        if (
+          status.connected &&
+          expectedEmail &&
+          connectedEmail &&
+          connectedEmail !== expectedEmail
+        ) {
+          setClassroomCourses([]);
+          setSelectedCourse(null);
+          setClassroomAssignments([]);
+          throw new Error(
+            `Google Classroom is connected as ${status.google_email}, but your EAOP account is ${currentSession.user.email}. Disconnect the Google account and reconnect using the EAOP email.`
+          );
+        }
+
+        if (status.connected) {
+          const courses = await classroomRequest<ClassroomCourse[]>("/courses");
+          if (!mounted) return;
+          setClassroomCourses(courses);
+        } else {
+          setClassroomCourses([]);
+          setSelectedCourse(null);
+          setClassroomAssignments([]);
+        }
+      } catch (error) {
+        if (!mounted) return;
+        setClassroomError(
+          error instanceof Error ? error.message : "Unable to load Google Classroom."
+        );
+      } finally {
+        if (mounted) setClassroomLoading(false);
+      }
+    }
+
+    loadClassroom();
+
+    return () => {
+      mounted = false;
+    };
+  }, [screen, session]);
+
+  // ------------------------------------------------
+  // 5. CONNECT GOOGLE CLASSROOM
+  // ------------------------------------------------
+
+  async function handleConnectClassroom() {
+    setClassroomActionLoading(true);
+    setClassroomError("");
+    setClassroomNotice("");
+
+    try {
+      const expectedEmail = session?.user.email?.trim().toLowerCase();
+
+      if (!expectedEmail) {
+        throw new Error(
+          "Your EAOP account does not have an email address. Please sign in again."
+        );
+      }
+
+      const result = await classroomRequest<{
+        authorization_url: string;
+      }>("/connect", "POST");
+
+      if (!result.authorization_url) {
+        throw new Error("Backend did not return a Google authorization URL.");
+      }
+
+      // Add the currently authenticated EAOP email as Google's account hint.
+      // This helps Google select/prefill the same account, but it does not
+      // replace Google's sign-in or account-selection process.
+      const [authorizationBase, rawQuery = ""] =
+        result.authorization_url.split("?");
+
+      const preservedParams = rawQuery
+        .split("&")
+        .filter(Boolean)
+        .filter((part) => {
+          const key = part.split("=", 1)[0];
+          return key !== "login_hint" && key !== "prompt" && key !== "hd";
+        });
+
+      const authorizationParams = [
+        ...preservedParams,
+        `login_hint=${encodeURIComponent(expectedEmail)}`,
+        `prompt=${encodeURIComponent("select_account consent")}`,
+      ];
+
+      // IIT Jodhpur Workspace domain hint. This is a UI hint, not an access
+      // restriction; Google may still require the user to choose/sign in.
+      if (expectedEmail.endsWith("@iitj.ac.in")) {
+        authorizationParams.push("hd=iitj.ac.in");
+      }
+
+      const hintedAuthorizationUrl =
+        `${authorizationBase}?${authorizationParams.join("&")}`;
+
+      await Linking.openURL(hintedAuthorizationUrl);
+
+      setClassroomNotice(
+        `Google sign-in opened for ${expectedEmail}. If Google shows another account, choose “Use another account” and sign in with ${expectedEmail}. After authorization, return to EAOP and tap Refresh courses.`
+      );
+    } catch (error) {
+      setClassroomError(
+        error instanceof Error ? error.message : "Unable to start Google sign-in."
+      );
+    } finally {
+      setClassroomActionLoading(false);
+    }
+  }
+
+  // ------------------------------------------------
+  // 6. FETCH ASSIGNMENTS FOR A COURSE
+  // ------------------------------------------------
+
+  async function handleSelectCourse(course: ClassroomCourse) {
+    setSelectedCourse(course);
+    setClassroomAssignments([]);
+    setClassroomError("");
+    setAssignmentsLoading(true);
+
+    try {
+      const assignments = await classroomRequest<ClassroomAssignment[]>(
+        `/courses/${encodeURIComponent(course.id)}/assignments`
+      );
+      setClassroomAssignments(assignments);
+    } catch (error) {
+      setClassroomError(
+        error instanceof Error ? error.message : "Unable to fetch assignments."
+      );
+    } finally {
+      setAssignmentsLoading(false);
+    }
+  }
+
+  // ------------------------------------------------
+  // 7. DISCONNECT GOOGLE CLASSROOM
+  // ------------------------------------------------
+
+  function handleDisconnectClassroom() {
+    Alert.alert(
+      "Disconnect Google Classroom?",
+      "EAOP will remove the saved Google Classroom connection. You can connect again later.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Disconnect",
+          style: "destructive",
+          onPress: async () => {
+            setClassroomActionLoading(true);
+            setClassroomError("");
+
+            try {
+              await classroomRequest<{ disconnected: boolean }>(
+                "/disconnect",
+                "DELETE"
+              );
+
+              setClassroomStatus(EMPTY_CLASSROOM_STATUS);
+              setClassroomCourses([]);
+              setSelectedCourse(null);
+              setClassroomAssignments([]);
+              setClassroomNotice("Google Classroom has been disconnected.");
+            } catch (error) {
+              setClassroomError(
+                error instanceof Error ? error.message : "Unable to disconnect."
+              );
+            } finally {
+              setClassroomActionLoading(false);
+            }
+          },
+        },
+      ]
+    );
+  }
+
+  // ------------------------------------------------
+  // 8. LOGIN / SIGNUP
   // ------------------------------------------------
 
   async function handleAuthentication() {
@@ -361,7 +712,7 @@ function AppContent() {
   }
 
   // ------------------------------------------------
-  // 5. CREATE STUDENT PROFILE
+  // 9. CREATE STUDENT PROFILE
   // ------------------------------------------------
 
   async function handleCreateProfile() {
@@ -399,13 +750,17 @@ function AppContent() {
         }),
       });
 
-      const result = await response.json();
+      const result: unknown = await response.json();
 
       if (!response.ok) {
-        throw new Error(result.detail || "Unable to create profile.");
+        const detail =
+          typeof result === "object" && result !== null && "detail" in result
+            ? String(result.detail)
+            : "Unable to create profile.";
+        throw new Error(detail);
       }
 
-      setProfile(result);
+      setProfile(result as Profile);
       setScreen("home");
 
       Alert.alert(
@@ -423,7 +778,7 @@ function AppContent() {
   }
 
   // ------------------------------------------------
-  // 6. LOGOUT
+  // 10. LOGOUT
   // ------------------------------------------------
 
   async function logout() {
@@ -435,7 +790,7 @@ function AppContent() {
   }
 
   // ------------------------------------------------
-  // 7. REUSABLE OPTION BUTTON
+  // 11. REUSABLE OPTION BUTTON
   // ------------------------------------------------
 
   function OptionButton({
@@ -465,7 +820,7 @@ function AppContent() {
   }
 
   // ------------------------------------------------
-  // 8. LOADING SCREEN
+  // 12. LOADING SCREEN
   // ------------------------------------------------
 
   if (screen === "loading") {
@@ -481,16 +836,14 @@ function AppContent() {
   }
 
   // ------------------------------------------------
-  // 9. ERROR SCREEN
+  // 13. ERROR SCREEN
   // ------------------------------------------------
 
   if (screen === "error") {
     return (
       <SafeAreaView style={styles.center}>
         <Text style={styles.logo}>EAOP.</Text>
-
         <Text style={styles.heading}>Something went wrong</Text>
-
         <Text style={styles.subtitle}>{errorMessage}</Text>
 
         <Pressable
@@ -513,7 +866,7 @@ function AppContent() {
   }
 
   // ------------------------------------------------
-  // 10. LOGIN / SIGNUP SCREEN
+  // 14. LOGIN / SIGNUP SCREEN
   // ------------------------------------------------
 
   if (screen === "auth") {
@@ -623,7 +976,7 @@ function AppContent() {
   }
 
   // ------------------------------------------------
-  // 11. PROFILE ONBOARDING SCREEN
+  // 15. PROFILE ONBOARDING SCREEN
   // ------------------------------------------------
 
   if (screen === "profile") {
@@ -640,16 +993,12 @@ function AppContent() {
             keyboardShouldPersistTaps="handled"
           >
             <Text style={styles.logo}>EAOP.</Text>
-
             <Text style={styles.stepText}>STEP 01 / PROFILE SETUP</Text>
-
             <Text style={styles.heading}>Tell us about yourself.</Text>
-
             <Text style={styles.subtitle}>
               Let's personalize your campus experience.
             </Text>
 
-            {/* NAME */}
             <View style={styles.inputGroup}>
               <Text style={styles.label}>FULL NAME *</Text>
               <TextInput
@@ -662,7 +1011,6 @@ function AppContent() {
               />
             </View>
 
-            {/* YEAR */}
             <Text style={styles.label}>ACADEMIC YEAR *</Text>
             <View style={styles.optionsContainer}>
               {[1, 2, 3, 4].map((item) => (
@@ -675,7 +1023,6 @@ function AppContent() {
               ))}
             </View>
 
-            {/* BRANCH */}
             <View style={styles.inputGroup}>
               <Text style={styles.label}>BRANCH *</Text>
               <TextInput
@@ -688,7 +1035,6 @@ function AppContent() {
               />
             </View>
 
-            {/* SEMESTER */}
             <Text style={styles.label}>CURRENT SEMESTER *</Text>
             <View style={styles.optionsContainer}>
               {[1, 2, 3, 4, 5, 6, 7, 8].map((item) => (
@@ -701,7 +1047,6 @@ function AppContent() {
               ))}
             </View>
 
-            {/* BIO */}
             <View style={styles.inputGroup}>
               <Text style={styles.label}>ABOUT YOU</Text>
               <TextInput
@@ -717,7 +1062,6 @@ function AppContent() {
               <Text style={styles.characterCount}>{bio.length}/500</Text>
             </View>
 
-            {/* SUBMIT */}
             <Pressable
               style={[styles.button, loading && styles.disabled]}
               onPress={handleCreateProfile}
@@ -740,7 +1084,7 @@ function AppContent() {
   }
 
   // ------------------------------------------------
-  // 12. BUS SCHEDULE SCREEN
+  // 16. BUS SCHEDULE SCREEN
   // ------------------------------------------------
 
   if (screen === "busSchedule") {
@@ -756,7 +1100,6 @@ function AppContent() {
         <StatusBar barStyle="dark-content" />
 
         <ScrollView contentContainerStyle={styles.busScreenContent}>
-          {/* HEADER */}
           <View style={styles.busHeader}>
             <Pressable
               onPress={() => setScreen("home")}
@@ -764,17 +1107,14 @@ function AppContent() {
             >
               <Text style={styles.backButtonText}>← Back</Text>
             </Pressable>
-
             <Text style={styles.logo}>EAOP.</Text>
           </View>
 
           <Text style={styles.heading}>Bus Schedule</Text>
-
           <Text style={styles.subtitle}>
             Find your institute bus timings and routes.
           </Text>
 
-          {/* DAY SELECTOR */}
           <Text style={styles.label}>SELECT DAY</Text>
 
           <View style={styles.busDaysContainer}>
@@ -806,7 +1146,6 @@ function AppContent() {
             })}
           </View>
 
-          {/* SCHEDULE HEADING */}
           <View style={styles.busScheduleHeader}>
             <View style={styles.busScheduleHeadingText}>
               <Text style={styles.sectionTitle}>
@@ -826,7 +1165,6 @@ function AppContent() {
             </View>
           </View>
 
-          {/* LOADING */}
           {busLoading && (
             <View style={styles.busMessage}>
               <ActivityIndicator size="large" color="#7565D8" />
@@ -836,7 +1174,6 @@ function AppContent() {
             </View>
           )}
 
-          {/* ERROR */}
           {!busLoading && busError !== "" && (
             <View style={styles.busMessage}>
               <Text style={styles.busErrorText}>{busError}</Text>
@@ -849,7 +1186,6 @@ function AppContent() {
             </View>
           )}
 
-          {/* EMPTY STATE */}
           {!busLoading && !busError && busTrips.length === 0 && (
             <View style={styles.busMessage}>
               <Text style={styles.busEmptyTitle}>No buses found</Text>
@@ -859,7 +1195,6 @@ function AppContent() {
             </View>
           )}
 
-          {/* BUS TRIPS GROUPED BY BUS NUMBER */}
           {!busLoading &&
             !busError &&
             (["B1", "B2", "B3"] as const).map((busNumber) => {
@@ -869,9 +1204,7 @@ function AppContent() {
                   a.departure_time.localeCompare(b.departure_time)
                 );
 
-              if (tripsForBus.length === 0) {
-                return null;
-              }
+              if (tripsForBus.length === 0) return null;
 
               return (
                 <View key={busNumber} style={styles.busGroupCard}>
@@ -889,9 +1222,7 @@ function AppContent() {
                           <Text style={styles.busDepartureTime}>
                             {formatBusTime(trip.departure_time)}
                           </Text>
-                          <Text style={styles.busLocation}>
-                            {trip.origin}
-                          </Text>
+                          <Text style={styles.busLocation}>{trip.origin}</Text>
                           <Text style={styles.busTimeLabel}>DEPARTURE</Text>
                         </View>
 
@@ -939,7 +1270,302 @@ function AppContent() {
   }
 
   // ------------------------------------------------
-  // 13. HOME DASHBOARD
+  // 17. GOOGLE CLASSROOM SCREEN
+  // ------------------------------------------------
+
+  if (screen === "classroom") {
+    return (
+      <SafeAreaView style={styles.container}>
+        <StatusBar barStyle="dark-content" />
+
+        <ScrollView contentContainerStyle={styles.classroomScreenContent}>
+          <View style={styles.busHeader}>
+            <Pressable
+              onPress={() => {
+                setSelectedCourse(null);
+                setClassroomAssignments([]);
+                setScreen("home");
+              }}
+              style={styles.backButton}
+            >
+              <Text style={styles.backButtonText}>← Back</Text>
+            </Pressable>
+            <Text style={styles.logo}>EAOP.</Text>
+          </View>
+
+          <Text style={styles.heading}>Google Classroom</Text>
+          <Text style={styles.subtitle}>
+            Access your courses and assignments in one place.
+          </Text>
+
+          <View style={styles.classroomConnectionCard}>
+            <View style={styles.classroomConnectionTop}>
+              <View style={styles.classroomIcon}>
+                <Text style={styles.classroomIconText}>G</Text>
+              </View>
+              <View style={styles.classroomConnectionInfo}>
+                <Text style={styles.classroomConnectionTitle}>
+                  {classroomStatus.connected
+                    ? "Google account connected"
+                    : "Connect Google Classroom"}
+                </Text>
+                <Text style={styles.classroomConnectionEmail}>
+                  {classroomStatus.connected
+                    ? classroomStatus.google_email
+                    : "Connect your student Google account to view courses."}
+                </Text>
+              </View>
+            </View>
+
+            {!classroomStatus.connected ? (
+              <Pressable
+                style={[
+                  styles.button,
+                  classroomActionLoading && styles.disabled,
+                ]}
+                onPress={handleConnectClassroom}
+                disabled={classroomActionLoading}
+              >
+                {classroomActionLoading ? (
+                  <ActivityIndicator color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.buttonText}>
+                    Connect Google Classroom
+                  </Text>
+                )}
+              </Pressable>
+            ) : (
+              <View style={styles.classroomActionsRow}>
+                <Pressable
+                  style={[styles.classroomSecondaryButton, { flex: 1 }]}
+                  onPress={refreshClassroom}
+                  disabled={classroomLoading || classroomActionLoading}
+                >
+                  <Text style={styles.classroomSecondaryButtonText}>
+                    Refresh courses
+                  </Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.classroomDisconnectButton, { flex: 1 }]}
+                  onPress={handleDisconnectClassroom}
+                  disabled={classroomActionLoading}
+                >
+                  <Text style={styles.classroomDisconnectText}>
+                    Disconnect
+                  </Text>
+                </Pressable>
+              </View>
+            )}
+          </View>
+
+          {classroomNotice !== "" && (
+            <View style={styles.classroomNoticeBox}>
+              <Text style={styles.classroomNoticeText}>
+                {classroomNotice}
+              </Text>
+              <Pressable
+                onPress={refreshClassroom}
+                style={styles.classroomInlineAction}
+              >
+                <Text style={styles.classroomInlineActionText}>
+                  I've completed sign-in — refresh connection
+                </Text>
+              </Pressable>
+            </View>
+          )}
+
+          {classroomError !== "" && (
+            <View style={styles.classroomErrorBox}>
+              <Text style={styles.classroomErrorText}>
+                {classroomError}
+              </Text>
+              <Pressable onPress={refreshClassroom}>
+                <Text style={styles.classroomInlineActionText}>Try again</Text>
+              </Pressable>
+            </View>
+          )}
+
+          {classroomLoading && (
+            <View style={styles.busMessage}>
+              <ActivityIndicator size="large" color="#7565D8" />
+              <Text style={styles.busMessageText}>
+                Loading Google Classroom...
+              </Text>
+            </View>
+          )}
+
+          {!classroomLoading &&
+            classroomStatus.connected &&
+            !selectedCourse && (
+              <>
+                <View style={styles.classroomSectionHeader}>
+                  <Text style={styles.sectionTitle}>Your Courses</Text>
+                  <Text style={styles.classroomCount}>
+                    {classroomCourses.length} courses
+                  </Text>
+                </View>
+
+                {classroomCourses.length === 0 ? (
+                  <View style={styles.busMessage}>
+                    <Text style={styles.busEmptyTitle}>No courses found</Text>
+                    <Text style={styles.busMessageText}>
+                      No courses were returned for this Google account.
+                    </Text>
+                  </View>
+                ) : (
+                  classroomCourses.map((course) => (
+                    <Pressable
+                      key={course.id}
+                      style={styles.classroomCourseCard}
+                      onPress={() => handleSelectCourse(course)}
+                    >
+                      <View style={styles.classroomCourseTop}>
+                        <View style={styles.classroomCourseMark}>
+                          <Text style={styles.classroomCourseMarkText}>
+                            {(course.name || "C").charAt(0).toUpperCase()}
+                          </Text>
+                        </View>
+                        <View style={styles.classroomCourseInfo}>
+                          <Text style={styles.classroomCourseName}>
+                            {course.name || "Untitled course"}
+                          </Text>
+                          {!!course.section && (
+                            <Text style={styles.classroomCourseMeta}>
+                              {course.section}
+                            </Text>
+                          )}
+                          {!!course.room && (
+                            <Text style={styles.classroomCourseMeta}>
+                              Room: {course.room}
+                            </Text>
+                          )}
+                        </View>
+                        <Text style={styles.classroomCourseChevron}>›</Text>
+                      </View>
+                      {!!course.description && (
+                        <Text
+                          numberOfLines={2}
+                          style={styles.classroomCourseDescription}
+                        >
+                          {course.description}
+                        </Text>
+                      )}
+                      <Text style={styles.classroomCourseAction}>
+                        VIEW ASSIGNMENTS →
+                      </Text>
+                    </Pressable>
+                  ))
+                )}
+              </>
+            )}
+
+          {!classroomLoading && selectedCourse && (
+            <>
+              <Pressable
+                style={styles.classroomBackToCourses}
+                onPress={() => {
+                  setSelectedCourse(null);
+                  setClassroomAssignments([]);
+                  setClassroomError("");
+                }}
+              >
+                <Text style={styles.classroomInlineActionText}>
+                  ← Back to courses
+                </Text>
+              </Pressable>
+
+              <Text style={styles.sectionTitle}>
+                {selectedCourse.name || "Course assignments"}
+              </Text>
+
+              {!!selectedCourse.section && (
+                <Text style={styles.classroomCourseMeta}>
+                  {selectedCourse.section}
+                </Text>
+              )}
+
+              {assignmentsLoading ? (
+                <View style={styles.busMessage}>
+                  <ActivityIndicator size="large" color="#7565D8" />
+                  <Text style={styles.busMessageText}>
+                    Loading assignments...
+                  </Text>
+                </View>
+              ) : classroomAssignments.length === 0 ? (
+                <View style={styles.busMessage}>
+                  <Text style={styles.busEmptyTitle}>
+                    No assignments found
+                  </Text>
+                  <Text style={styles.busMessageText}>
+                    This course has no coursework available to display.
+                  </Text>
+                </View>
+              ) : (
+                classroomAssignments.map((assignment) => (
+                  <View
+                    key={assignment.id}
+                    style={styles.classroomAssignmentCard}
+                  >
+                    <Text style={styles.classroomAssignmentTitle}>
+                      {assignment.title || "Untitled assignment"}
+                    </Text>
+                    <Text style={styles.classroomAssignmentMeta}>
+                      {assignment.work_type || "Coursework"} · {assignment.state || "Published"}
+                    </Text>
+                    {!!assignment.description && (
+                      <Text style={styles.classroomAssignmentDescription}>
+                        {assignment.description}
+                      </Text>
+                    )}
+                    {assignment.due_date && (
+                      <View style={styles.classroomDueRow}>
+                        <Text style={styles.classroomDueLabel}>DUE</Text>
+                        <Text style={styles.classroomDueValue}>
+                          {formatDueDate(
+                            assignment.due_date,
+                            assignment.due_time
+                          )}
+                        </Text>
+                      </View>
+                    )}
+                    {assignment.max_points !== null && (
+                      <Text style={styles.classroomAssignmentMeta}>
+                        Maximum points: {assignment.max_points}
+                      </Text>
+                    )}
+                    {!!assignment.alternate_link && (
+                      <Pressable
+                        style={styles.classroomInlineAction}
+                        onPress={() =>
+                          Linking.openURL(assignment.alternate_link!).catch(() =>
+                            Alert.alert(
+                              "Unable to open assignment",
+                              "The assignment link could not be opened."
+                            )
+                          )
+                        }
+                      >
+                        <Text style={styles.classroomInlineActionText}>
+                          Open in Google Classroom →
+                        </Text>
+                      </Pressable>
+                    )}
+                  </View>
+                ))
+              )}
+            </>
+          )}
+
+          <Text style={styles.footerText}>
+            MADE FOR STUDENTS, BY STUDENTS.
+          </Text>
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
+
+  // ------------------------------------------------
+  // 18. HOME DASHBOARD
   // ------------------------------------------------
 
   return (
@@ -987,7 +1613,6 @@ function AppContent() {
               <Text style={styles.infoValue}>{profile?.year}</Text>
               <Text style={styles.infoLabel}>YEAR</Text>
             </View>
-
             <View style={styles.infoBox}>
               <Text style={styles.infoValue}>{profile?.semester}</Text>
               <Text style={styles.infoLabel}>SEMESTER</Text>
@@ -1011,8 +1636,26 @@ function AppContent() {
           <Text style={styles.comingSoon}>VIEW BUS TIMETABLE →</Text>
         </Pressable>
 
-        <View style={styles.featureCard}>
+        <Pressable
+          style={styles.featureCard}
+          onPress={() => {
+            setClassroomError("");
+            setClassroomNotice("");
+            setSelectedCourse(null);
+            setClassroomAssignments([]);
+            setScreen("classroom");
+          }}
+        >
           <Text style={styles.featureNumber}>02</Text>
+          <Text style={styles.featureTitle}>Google Classroom</Text>
+          <Text style={styles.featureDescription}>
+            View your courses, assignments and academic deadlines.
+          </Text>
+          <Text style={styles.comingSoon}>OPEN CLASSROOM →</Text>
+        </Pressable>
+
+        <View style={styles.featureCard}>
+          <Text style={styles.featureNumber}>03</Text>
           <Text style={styles.featureTitle}>Campus Activities</Text>
           <Text style={styles.featureDescription}>
             Keep track of your college life in one place.
@@ -1402,7 +2045,7 @@ const styles = StyleSheet.create({
     marginTop: 18,
   },
 
-  // Bus schedule styles
+  // BUS SCHEDULE STYLES
   busScreenContent: {
     padding: 25,
     paddingBottom: 50,
@@ -1629,11 +2272,271 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: "800",
   },
+
+  // GOOGLE CLASSROOM STYLES
+  classroomScreenContent: {
+    padding: 25,
+    paddingBottom: 50,
+  },
+
+  classroomConnectionCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 18,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: "#EAE7F2",
+    marginBottom: 25,
+  },
+
+  classroomConnectionTop: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 12,
+  },
+
+  classroomIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    backgroundColor: "#EAE5FF",
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 13,
+  },
+
+  classroomIconText: {
+    color: "#7565D8",
+    fontSize: 25,
+    fontWeight: "900",
+  },
+
+  classroomConnectionInfo: {
+    flex: 1,
+  },
+
+  classroomConnectionTitle: {
+    color: "#202033",
+    fontSize: 15,
+    fontWeight: "800",
+    marginBottom: 5,
+  },
+
+  classroomConnectionEmail: {
+    color: "#77758A",
+    fontSize: 12,
+    lineHeight: 18,
+  },
+
+  classroomActionsRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 8,
+  },
+
+  classroomSecondaryButton: {
+    backgroundColor: "#7565D8",
+    borderRadius: 12,
+    padding: 14,
+    alignItems: "center",
+  },
+
+  classroomSecondaryButtonText: {
+    color: "#FFFFFF",
+    fontSize: 12,
+    fontWeight: "800",
+  },
+
+  classroomDisconnectButton: {
+    backgroundColor: "#FFF0F0",
+    borderRadius: 12,
+    padding: 14,
+    alignItems: "center",
+  },
+
+  classroomDisconnectText: {
+    color: "#C53D3D",
+    fontSize: 12,
+    fontWeight: "800",
+  },
+
+  classroomNoticeBox: {
+    backgroundColor: "#F0EDFF",
+    borderRadius: 13,
+    padding: 14,
+    marginBottom: 18,
+  },
+
+  classroomNoticeText: {
+    color: "#55536A",
+    fontSize: 12,
+    lineHeight: 19,
+  },
+
+  classroomErrorBox: {
+    backgroundColor: "#FFF0F0",
+    borderRadius: 13,
+    padding: 14,
+    marginBottom: 18,
+  },
+
+  classroomErrorText: {
+    color: "#B83232",
+    fontSize: 12,
+    lineHeight: 19,
+    marginBottom: 8,
+  },
+
+  classroomInlineAction: {
+    alignSelf: "flex-start",
+    marginTop: 10,
+  },
+
+  classroomInlineActionText: {
+    color: "#7565D8",
+    fontSize: 12,
+    fontWeight: "800",
+  },
+
+  classroomSectionHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 15,
+  },
+
+  classroomCount: {
+    color: "#7565D8",
+    fontSize: 11,
+    fontWeight: "700",
+  },
+
+  classroomCourseCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 17,
+    padding: 17,
+    marginBottom: 13,
+    borderWidth: 1,
+    borderColor: "#EAE7F2",
+  },
+
+  classroomCourseTop: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+
+  classroomCourseMark: {
+    width: 43,
+    height: 43,
+    borderRadius: 12,
+    backgroundColor: "#EAE5FF",
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 12,
+  },
+
+  classroomCourseMarkText: {
+    color: "#7565D8",
+    fontSize: 19,
+    fontWeight: "900",
+  },
+
+  classroomCourseInfo: {
+    flex: 1,
+  },
+
+  classroomCourseName: {
+    color: "#202033",
+    fontSize: 15,
+    fontWeight: "800",
+    marginBottom: 4,
+  },
+
+  classroomCourseMeta: {
+    color: "#77758A",
+    fontSize: 11,
+    marginTop: 2,
+  },
+
+  classroomCourseChevron: {
+    color: "#7565D8",
+    fontSize: 28,
+    paddingLeft: 8,
+  },
+
+  classroomCourseDescription: {
+    color: "#77758A",
+    fontSize: 12,
+    lineHeight: 18,
+    marginTop: 12,
+  },
+
+  classroomCourseAction: {
+    color: "#7565D8",
+    fontSize: 9,
+    fontWeight: "900",
+    letterSpacing: 1.2,
+    marginTop: 15,
+  },
+
+  classroomBackToCourses: {
+    alignSelf: "flex-start",
+    marginBottom: 18,
+  },
+
+  classroomAssignmentCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 16,
+    padding: 17,
+    marginBottom: 13,
+    borderWidth: 1,
+    borderColor: "#EAE7F2",
+  },
+
+  classroomAssignmentTitle: {
+    color: "#202033",
+    fontSize: 15,
+    fontWeight: "800",
+    lineHeight: 21,
+  },
+
+  classroomAssignmentMeta: {
+    color: "#9995AA",
+    fontSize: 10,
+    marginTop: 7,
+  },
+
+  classroomAssignmentDescription: {
+    color: "#55536A",
+    fontSize: 12,
+    lineHeight: 19,
+    marginTop: 10,
+  },
+
+  classroomDueRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    backgroundColor: "#F7F6FC",
+    borderRadius: 10,
+    padding: 11,
+    marginTop: 13,
+  },
+
+  classroomDueLabel: {
+    color: "#7565D8",
+    fontSize: 9,
+    fontWeight: "900",
+    letterSpacing: 1.2,
+  },
+
+  classroomDueValue: {
+    color: "#55536A",
+    fontSize: 11,
+    fontWeight: "700",
+  },
 });
 
-
-// Keep SafeAreaProvider at the application root so every screen can use
-// SafeAreaView from react-native-safe-area-context.
+// SafeAreaProvider belongs at the application root.
 export default function App() {
   return (
     <SafeAreaProvider>
