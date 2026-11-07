@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 
 import {
   ActivityIndicator,
@@ -22,11 +22,14 @@ import {
   SafeAreaView,
 } from "react-native-safe-area-context";
 import Svg, { Circle, G, Path } from "react-native-svg";
+import MapView, { Marker } from "react-native-maps";
+import * as Location from "expo-location";
 
 import type { Session } from "@supabase/supabase-js";
 
 import { supabase } from "./src/lib/supabase";
 import StudentGymkhanaTree from "./src/components/StudentGymkhanaTree";
+import AcademicCalendarScreen from "./src/components/AcademicCalendarScreen";
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, "");
 
@@ -54,9 +57,11 @@ type Screen =
   | "campusFests"
   | "busSchedule"
   | "classroom"
+  | "campusMap"
+  | "calendar"
   | "error";
 
-type MainTab = "Home" | "Classroom" | "Map" | "Food" | "Settings";
+type MainTab = "Home" | "Classroom" | "Calendar" | "Map" | "Food" | "Settings";
 
 type BusDay = "MON" | "TUE" | "WED" | "THU" | "FRI" | "SAT" | "SUN";
 
@@ -70,6 +75,326 @@ type BusTrip = {
   destination: string;
   route: string;
   source_page: number;
+};
+
+type CampusCategory =
+  | "Academic"
+  | "Hostels"
+  | "Food"
+  | "Sports"
+  | "Essentials"
+  | "Landmarks";
+
+type CampusLocation = {
+  id: string;
+  name: string;
+  category: CampusCategory;
+  description: string;
+  latitude: number;
+  longitude: number;
+  coordinateNote?: string;
+};
+
+const IITJ_CAMPUS_REGION = {
+  latitude: 26.4693,
+  longitude: 73.1152,
+  latitudeDelta: 0.025,
+  longitudeDelta: 0.020,
+};
+
+// Location names are based on IIT Jodhpur's published facilities and campus maps.
+// Some coordinates are approximate campus-zone pins. Verify them against on-campus
+// signage / exact Google Maps place pins before treating them as building entrances.
+const CAMPUS_LOCATIONS: CampusLocation[] = [
+  {
+    id: "main-gate",
+    name: "Institute Gate 1 — Main Gate",
+    category: "Essentials",
+    description: "Main campus entry and security help desk.",
+    latitude: 26.47085,
+    longitude: 73.11190,
+    coordinateNote: "Approximate gate-area pin",
+  },
+  {
+    id: "gate-2",
+    name: "Institute Gate 2 — Pedestrian Gate",
+    category: "Essentials",
+    description: "Pedestrian access point near the School of AI and Data Science.",
+    latitude: 26.46075,
+    longitude: 73.11032,
+    coordinateNote: "OpenStreetMap location",
+  },
+  {
+    id: "chanakya",
+    name: "Chanakya Complex — Administration",
+    category: "Academic",
+    description: "Main institute building with administrative offices.",
+    latitude: 26.47115,
+    longitude: 73.11314,
+    coordinateNote: "OpenStreetMap location",
+  },
+  {
+    id: "learning-hub",
+    name: "S. R. Ranganathan Learning Hub — Library",
+    category: "Academic",
+    description: "Central library and the clock-tower landmark at the entrance to the academic area.",
+    latitude: 26.47195,
+    longitude: 73.11355,
+    coordinateNote: "Approximate pin near the mapped library area",
+  },
+  {
+    id: "lecture-hall-1",
+    name: "Jnan Chandra Ghosh Lecture Hall Complex",
+    category: "Academic",
+    description: "Lecture halls and teaching classrooms.",
+    latitude: 26.47280,
+    longitude: 73.11510,
+    coordinateNote: "Approximate academic-zone pin",
+  },
+  {
+    id: "lecture-hall-2",
+    name: "New Lecture Hall Complex — LHC 2",
+    category: "Academic",
+    description: "New lecture hall complex behind the Department of Physics.",
+    latitude: 26.47220,
+    longitude: 73.11610,
+    coordinateNote: "Approximate academic-zone pin",
+  },
+  {
+    id: "cse",
+    name: "Rangaswamy Narasimhan Bhawan — CSE",
+    category: "Academic",
+    description: "Departments of Computer Science, Mathematics, and Humanities and Social Sciences.",
+    latitude: 26.47270,
+    longitude: 73.11620,
+    coordinateNote: "Approximate academic-zone pin",
+  },
+  {
+    id: "chemistry",
+    name: "Acharya P. C. Ray Bhawan — Chemistry",
+    category: "Academic",
+    description: "Department of Chemistry.",
+    latitude: 26.47210,
+    longitude: 73.11580,
+    coordinateNote: "Approximate academic-zone pin",
+  },
+  {
+    id: "electrical",
+    name: "J. C. Bose Bhawan — Electrical Engineering",
+    category: "Academic",
+    description: "Department of Electrical Engineering.",
+    latitude: 26.47150,
+    longitude: 73.11600,
+    coordinateNote: "Approximate academic-zone pin",
+  },
+  {
+    id: "mechanical",
+    name: "Mechanical Engineering Department",
+    category: "Academic",
+    description: "Department of Mechanical Engineering and associated laboratories.",
+    latitude: 26.47280,
+    longitude: 73.11710,
+    coordinateNote: "Approximate academic-zone pin",
+  },
+  {
+    id: "basic-labs",
+    name: "Basic Laboratory Building",
+    category: "Academic",
+    description: "Basic teaching and research laboratory facility.",
+    latitude: 26.47300,
+    longitude: 73.11690,
+    coordinateNote: "Approximate academic-zone pin",
+  },
+  {
+    id: "ai-ds",
+    name: "School of Artificial Intelligence and Data Science",
+    category: "Academic",
+    description: "School of AI and Data Science.",
+    latitude: 26.46116,
+    longitude: 73.11072,
+    coordinateNote: "OpenStreetMap building location",
+  },
+  {
+    id: "bioscience",
+    name: "Bioscience and Bioengineering Building",
+    category: "Academic",
+    description: "Department of Bioscience and Bioengineering.",
+    latitude: 26.47200,
+    longitude: 73.11670,
+    coordinateNote: "Approximate academic-zone pin",
+  },
+  {
+    id: "boys-hostels",
+    name: "Boys' Hostels — O3 / O4 and hostel area",
+    category: "Hostels",
+    description: "Student residential area. Check your allotted hostel name before navigating.",
+    latitude: 26.47410,
+    longitude: 73.11780,
+    coordinateNote: "Approximate hostel-zone pin",
+  },
+  {
+    id: "girls-hostel-i2",
+    name: "Aparajita — Girls' Hostel I2",
+    category: "Hostels",
+    description: "Girls' hostel I2, also known as Aparajita.",
+    latitude: 26.47240,
+    longitude: 73.11500,
+    coordinateNote: "Approximate hostel-zone pin",
+  },
+  {
+    id: "central-dining",
+    name: "Central Dining Hall / Mess",
+    category: "Food",
+    description: "Main dining facility serving students on campus.",
+    latitude: 26.47350,
+    longitude: 73.11720,
+    coordinateNote: "Approximate dining-zone pin",
+  },
+  {
+    id: "mess-2",
+    name: "Mess 2",
+    category: "Food",
+    description: "Second campus mess location shown on the institute campus map.",
+    latitude: 26.47400,
+    longitude: 73.11780,
+    coordinateNote: "Approximate dining-zone pin",
+  },
+  {
+    id: "food-court",
+    name: "Campus Food Court",
+    category: "Food",
+    description: "Separate food court for meals, snacks, and refreshments.",
+    latitude: 26.47045,
+    longitude: 73.11380,
+    coordinateNote: "Approximate community-centre pin",
+  },
+  {
+    id: "health-centre",
+    name: "Primary Health Centre",
+    category: "Essentials",
+    description: "On-campus health centre with round-the-clock medical support and emergency services.",
+    latitude: 26.46990,
+    longitude: 73.11480,
+    coordinateNote: "Approximate residential-campus pin",
+  },
+  {
+    id: "guest-house",
+    name: "Institute Guest House",
+    category: "Essentials",
+    description: "Guest accommodation within the institute campus.",
+    latitude: 26.46930,
+    longitude: 73.11400,
+    coordinateNote: "Approximate campus-zone pin",
+  },
+  {
+    id: "shopping-centre",
+    name: "Shopping Centre / Fresh and Green",
+    category: "Essentials",
+    description: "Campus shopping and convenience facilities.",
+    latitude: 26.47000,
+    longitude: 73.11280,
+    coordinateNote: "Approximate shopping-zone pin",
+  },
+  {
+    id: "bank-atm",
+    name: "Bank and ATM Area",
+    category: "Essentials",
+    description: "Banking and ATM facilities serving the campus community.",
+    latitude: 26.47070,
+    longitude: 73.11350,
+    coordinateNote: "Approximate service-zone pin",
+  },
+  {
+    id: "sports-complex",
+    name: "Akash Building — Sports Complex",
+    category: "Sports",
+    description: "Indoor sports and recreation facilities.",
+    latitude: 26.47630,
+    longitude: 73.11980,
+    coordinateNote: "Approximate sports-zone pin",
+  },
+  {
+    id: "cricket-ground",
+    name: "Cricket Ground",
+    category: "Sports",
+    description: "Outdoor cricket facility.",
+    latitude: 26.47700,
+    longitude: 73.11900,
+    coordinateNote: "Approximate sports-zone pin",
+  },
+  {
+    id: "football-ground",
+    name: "Football Ground",
+    category: "Sports",
+    description: "Outdoor football facility.",
+    latitude: 26.47600,
+    longitude: 73.11860,
+    coordinateNote: "Approximate sports-zone pin",
+  },
+  {
+    id: "swimming-pool",
+    name: "Swimming Pool",
+    category: "Sports",
+    description: "Campus swimming facility.",
+    latitude: 26.47550,
+    longitude: 73.11950,
+    coordinateNote: "Approximate sports-zone pin",
+  },
+  {
+    id: "athletics",
+    name: "Athletics Field and Track",
+    category: "Sports",
+    description: "Outdoor athletics and running facilities.",
+    latitude: 26.47750,
+    longitude: 73.12020,
+    coordinateNote: "Approximate sports-zone pin",
+  },
+  {
+    id: "knowledge-tree",
+    name: "Knowledge Tree / Brain Tree Circle",
+    category: "Landmarks",
+    description: "Campus landmark and popular student photo spot.",
+    latitude: 26.47125,
+    longitude: 73.11395,
+    coordinateNote: "Approximate landmark pin",
+  },
+  {
+    id: "friendship-fountain",
+    name: "Friendship Fountain",
+    category: "Landmarks",
+    description: "Water fountain landmark in front of Chanakya Complex.",
+    latitude: 26.47130,
+    longitude: 73.11390,
+    coordinateNote: "Approximate landmark pin",
+  },
+  {
+    id: "jodhpur-club",
+    name: "Jodhpur Club",
+    category: "Landmarks",
+    description: "Campus club and community facility.",
+    latitude: 26.46840,
+    longitude: 73.11230,
+    coordinateNote: "Approximate campus-zone pin",
+  },
+];
+
+const CAMPUS_CATEGORIES: ("All" | CampusCategory)[] = [
+  "All",
+  "Academic",
+  "Hostels",
+  "Food",
+  "Sports",
+  "Essentials",
+  "Landmarks",
+];
+
+const CAMPUS_CATEGORY_COLORS: Record<CampusCategory, string> = {
+  Academic: "#5C6BC0",
+  Hostels: "#8E63CE",
+  Food: "#D98A35",
+  Sports: "#269B78",
+  Essentials: "#D65F67",
+  Landmarks: "#258AA8",
 };
 
 type ClassroomStatus = {
@@ -93,6 +418,7 @@ type ClassroomCourse = {
 type ClassroomAssignment = {
   id: string;
   course_id: string;
+  course_name?: string | null;
   title: string | null;
   description: string | null;
   state: string | null;
@@ -103,6 +429,29 @@ type ClassroomAssignment = {
   alternate_link: string | null;
   creation_time: string | null;
   update_time: string | null;
+  submission_state?: string;
+  status?: "UPCOMING" | "OVERDUE" | "NO_DUE_DATE" | "COMPLETED" | "RETURNED";
+  late?: boolean;
+};
+
+type ClassroomDashboard = {
+  courses: ClassroomCourse[];
+  summary: {
+    total_courses: number;
+    total_assignments: number;
+    pending: number;
+    upcoming: number;
+    overdue: number;
+    no_due_date: number;
+    completed: number;
+    returned: number;
+  };
+  upcoming_assignments: ClassroomAssignment[];
+  overdue_assignments: ClassroomAssignment[];
+  no_due_date_assignments: ClassroomAssignment[];
+  completed_assignments: ClassroomAssignment[];
+  returned_assignments: ClassroomAssignment[];
+  synced_at: string;
 };
 
 const BUS_DAYS: { label: string; value: BusDay }[] = [
@@ -206,7 +555,7 @@ function BottomNavigationBar({
   activeTab: MainTab;
   onTabPress: (tab: MainTab) => void;
 }) {
-  const tabs: MainTab[] = ["Home", "Classroom", "Map", "Food", "Settings"];
+  const tabs: MainTab[] = ["Home", "Classroom", "Calendar", "Map", "Food", "Settings"];
 
   function renderIcon(tab: MainTab, color: string) {
     const icon = {
@@ -220,6 +569,12 @@ function BottomNavigationBar({
         <>
           <Path d="M3.5 5.5h5A3.5 3.5 0 0 1 12 9v11a3.5 3.5 0 0 0-3.5-3.5h-5z" />
           <Path d="M20.5 5.5h-5A3.5 3.5 0 0 0 12 9v11a3.5 3.5 0 0 1 3.5-3.5h5z" />
+        </>
+      ),
+      Calendar: (
+        <>
+          <Path d="M4 5.5h16A1.5 1.5 0 0 1 21.5 7v13A1.5 1.5 0 0 1 20 21.5H4A1.5 1.5 0 0 1 2.5 20V7A1.5 1.5 0 0 1 4 5.5Z" />
+          <Path d="M7.5 2.5v6M16.5 2.5v6M2.5 10h19M7 14h3M14 14h3M7 18h3" />
         </>
       ),
       Map: (
@@ -332,6 +687,8 @@ function AppContent() {
     useState<ClassroomStatus>(EMPTY_CLASSROOM_STATUS);
   const [classroomCourses, setClassroomCourses] =
     useState<ClassroomCourse[]>([]);
+  const [classroomDashboard, setClassroomDashboard] =
+    useState<ClassroomDashboard | null>(null);
   const [selectedCourse, setSelectedCourse] =
     useState<ClassroomCourse | null>(null);
   const [classroomAssignments, setClassroomAssignments] =
@@ -341,6 +698,16 @@ function AppContent() {
   const [assignmentsLoading, setAssignmentsLoading] = useState(false);
   const [classroomError, setClassroomError] = useState("");
   const [classroomNotice, setClassroomNotice] = useState("");
+
+  // Campus map state
+  const mapRef = useRef<MapView | null>(null);
+  const [campusSearch, setCampusSearch] = useState("");
+  const [campusCategory, setCampusCategory] =
+    useState<"All" | CampusCategory>("All");
+  const [selectedCampusLocation, setSelectedCampusLocation] =
+    useState<CampusLocation | null>(null);
+  const [mapLocationLoading, setMapLocationLoading] = useState(false);
+  const [showUserLocation, setShowUserLocation] = useState(false);
 
   function openHome() {
     setActiveTab("Home");
@@ -356,6 +723,76 @@ function AppContent() {
     setScreen("classroom");
   }
 
+  function openCampusMap() {
+    setActiveTab("Map");
+    setCampusSearch("");
+    setCampusCategory("All");
+    setScreen("campusMap");
+  }
+
+  function openCalendar() {
+    setActiveTab("Calendar");
+    setScreen("calendar");
+  }
+
+  async function handleLocateMe() {
+    setMapLocationLoading(true);
+    try {
+      const permission = await Location.requestForegroundPermissionsAsync();
+      if (permission.status !== "granted") {
+        Alert.alert(
+          "Location permission needed",
+          "Allow location access to show your current position on the campus map."
+        );
+        return;
+      }
+
+      setShowUserLocation(true);
+      const current = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+
+      mapRef.current?.animateToRegion(
+        {
+          latitude: current.coords.latitude,
+          longitude: current.coords.longitude,
+          latitudeDelta: 0.0025,
+          longitudeDelta: 0.0025,
+        },
+        700
+      );
+    } catch (error) {
+      Alert.alert(
+        "Unable to get location",
+        error instanceof Error
+          ? error.message
+          : "Please check that location services are enabled."
+      );
+    } finally {
+      setMapLocationLoading(false);
+    }
+  }
+
+  function openCampusDirections(location: CampusLocation) {
+    const destination = encodeURIComponent(`${location.name}, IIT Jodhpur`);
+    const url = `https://www.google.com/maps/dir/?api=1&destination=${destination}&travelmode=walking`;
+    Linking.openURL(url).catch(() => {
+      Alert.alert("Unable to open directions", "Please try opening Google Maps manually.");
+    });
+  }
+
+  const filteredCampusLocations = CAMPUS_LOCATIONS.filter((location) => {
+    const matchesCategory =
+      campusCategory === "All" || location.category === campusCategory;
+    const query = campusSearch.trim().toLowerCase();
+    const matchesSearch =
+      !query ||
+      location.name.toLowerCase().includes(query) ||
+      location.description.toLowerCase().includes(query) ||
+      location.category.toLowerCase().includes(query);
+    return matchesCategory && matchesSearch;
+  });
+
   function handleBottomTabPress(tab: MainTab) {
     if (tab === "Home") {
       openHome();
@@ -363,6 +800,14 @@ function AppContent() {
     }
     if (tab === "Classroom") {
       openClassroom();
+      return;
+    }
+    if (tab === "Calendar") {
+      openCalendar();
+      return;
+    }
+    if (tab === "Map") {
+      openCampusMap();
       return;
     }
     setActiveTab(tab);
@@ -386,37 +831,96 @@ function AppContent() {
     method: "GET" | "POST" | "DELETE" = "GET"
   ): Promise<T> {
     if (!API_URL) {
-      throw new Error("Backend API URL is missing.");
+      throw new Error("Backend API URL is missing. Check EXPO_PUBLIC_API_URL.");
     }
 
-    if (!session) {
-      throw new Error("Please sign in to EAOP first.");
+    // Always use the latest Supabase session token. This avoids sending an old
+    // access token after Supabase silently refreshes the user's session.
+    const {
+      data: { session: activeSession },
+      error: sessionError,
+    } = await supabase.auth.getSession();
+
+    if (sessionError) {
+      throw new Error(`Unable to read your EAOP session: ${sessionError.message}`);
+    }
+    if (!activeSession?.access_token) {
+      throw new Error("Your EAOP session has expired. Please sign in again.");
     }
 
-    const response = await fetch(
-      `${API_URL}/api/v1/classroom${path}`,
-      {
-        method,
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
-        },
+    const baseUrl = API_URL.replace(/\/+$/, "");
+    const response = await fetch(`${baseUrl}/api/v1/classroom${path}`, {
+      method,
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${activeSession.access_token}`,
+      },
+    });
+
+    const responseText = await response.text();
+    let result: unknown = null;
+    if (responseText) {
+      try {
+        result = JSON.parse(responseText);
+      } catch {
+        result = responseText;
       }
-    );
-
-    const result: unknown = await response.json().catch(() => null);
+    }
 
     if (!response.ok) {
       const detail =
-        typeof result === "object" &&
-        result !== null &&
-        "detail" in result
+        typeof result === "object" && result !== null && "detail" in result
           ? String(result.detail)
-          : `Classroom request failed (${response.status}).`;
-
+          : typeof result === "string" && result.trim()
+            ? result
+            : `Classroom request failed (${response.status}).`;
       throw new Error(detail);
     }
 
     return result as T;
+  }
+
+  // Keep the older, working /courses endpoint as the primary course fetch.
+  // The newer dashboard is an enhancement and must not prevent courses from
+  // appearing if /dashboard is unavailable or returns an unexpected response.
+  async function fetchClassroomContent(): Promise<{
+    courses: ClassroomCourse[];
+    dashboard: ClassroomDashboard | null;
+  }> {
+    let courses: ClassroomCourse[] = [];
+    let dashboard: ClassroomDashboard | null = null;
+    let coursesError: unknown = null;
+
+    try {
+      const result = await classroomRequest<ClassroomCourse[]>("/courses");
+      if (!Array.isArray(result)) {
+        throw new Error("The Classroom courses endpoint returned an invalid response.");
+      }
+      courses = result;
+    } catch (error) {
+      coursesError = error;
+    }
+
+    // Try the dashboard as a fallback if /courses fails, and also load it as
+    // optional extra information when the older endpoint succeeds.
+    try {
+      dashboard = await classroomRequest<ClassroomDashboard>("/dashboard");
+      if (!dashboard || !Array.isArray(dashboard.courses)) {
+        throw new Error("The Classroom dashboard returned an invalid response.");
+      }
+      if (courses.length === 0) {
+        courses = dashboard.courses;
+      }
+    } catch (dashboardError) {
+      dashboard = null;
+      if (coursesError && courses.length === 0) {
+        const first = coursesError instanceof Error ? coursesError.message : String(coursesError);
+        const second = dashboardError instanceof Error ? dashboardError.message : String(dashboardError);
+        throw new Error(`Unable to fetch Google Classroom courses. /courses: ${first} /dashboard: ${second}`);
+      }
+    }
+
+    return { courses, dashboard };
   }
 
   // ------------------------------------------------
@@ -583,8 +1087,10 @@ function AppContent() {
   // ------------------------------------------------
 
   async function refreshClassroom() {
-    const currentSession = session;
-    if (!currentSession) return;
+    if (!session) {
+      setClassroomError("Please sign in to EAOP first.");
+      return;
+    }
 
     setClassroomLoading(true);
     setClassroomError("");
@@ -594,31 +1100,22 @@ function AppContent() {
       const status = await classroomRequest<ClassroomStatus>("/status");
       setClassroomStatus(status);
 
-      const expectedEmail = currentSession.user.email?.trim().toLowerCase();
-      const connectedEmail = status.google_email?.trim().toLowerCase();
-
-      if (
-        status.connected &&
-        expectedEmail &&
-        connectedEmail &&
-        connectedEmail !== expectedEmail
-      ) {
+      if (!status.connected) {
         setClassroomCourses([]);
+        setClassroomDashboard(null);
         setSelectedCourse(null);
         setClassroomAssignments([]);
-        throw new Error(
-          `Google Classroom is connected as ${status.google_email}, but your EAOP account is ${currentSession.user.email}. Disconnect the Google account and reconnect using the EAOP email.`
-        );
+        return;
       }
 
-      if (status.connected) {
-        const courses = await classroomRequest<ClassroomCourse[]>("/courses");
-        setClassroomCourses(courses);
-      } else {
-        setClassroomCourses([]);
-        setSelectedCourse(null);
-        setClassroomAssignments([]);
-      }
+      // The Google account is stored against the signed-in EAOP user on the
+      // backend. Do not block fetching merely because the two email addresses
+      // differ; students may use separate EAOP and institute Google accounts.
+      const content = await fetchClassroomContent();
+      setClassroomCourses(content.courses);
+      setClassroomDashboard(content.dashboard);
+      setSelectedCourse(null);
+      setClassroomAssignments([]);
     } catch (error) {
       setClassroomError(
         error instanceof Error ? error.message : "Unable to load Google Classroom."
@@ -631,7 +1128,6 @@ function AppContent() {
   useEffect(() => {
     if (screen !== "classroom" || !session) return;
 
-    const currentSession = session;
     let mounted = true;
 
     async function loadClassroom() {
@@ -641,35 +1137,22 @@ function AppContent() {
       try {
         const status = await classroomRequest<ClassroomStatus>("/status");
         if (!mounted) return;
-
         setClassroomStatus(status);
 
-        const expectedEmail = currentSession.user.email?.trim().toLowerCase();
-        const connectedEmail = status.google_email?.trim().toLowerCase();
-
-        if (
-          status.connected &&
-          expectedEmail &&
-          connectedEmail &&
-          connectedEmail !== expectedEmail
-        ) {
+        if (!status.connected) {
           setClassroomCourses([]);
+          setClassroomDashboard(null);
           setSelectedCourse(null);
           setClassroomAssignments([]);
-          throw new Error(
-            `Google Classroom is connected as ${status.google_email}, but your EAOP account is ${currentSession.user.email}. Disconnect the Google account and reconnect using the EAOP email.`
-          );
+          return;
         }
 
-        if (status.connected) {
-          const courses = await classroomRequest<ClassroomCourse[]>("/courses");
-          if (!mounted) return;
-          setClassroomCourses(courses);
-        } else {
-          setClassroomCourses([]);
-          setSelectedCourse(null);
-          setClassroomAssignments([]);
-        }
+        const content = await fetchClassroomContent();
+        if (!mounted) return;
+        setClassroomCourses(content.courses);
+        setClassroomDashboard(content.dashboard);
+        setSelectedCourse(null);
+        setClassroomAssignments([]);
       } catch (error) {
         if (!mounted) return;
         setClassroomError(
@@ -681,7 +1164,6 @@ function AppContent() {
     }
 
     loadClassroom();
-
     return () => {
       mounted = false;
     };
@@ -805,6 +1287,7 @@ function AppContent() {
 
               setClassroomStatus(EMPTY_CLASSROOM_STATUS);
               setClassroomCourses([]);
+              setClassroomDashboard(null);
               setSelectedCourse(null);
               setClassroomAssignments([]);
               setClassroomNotice("Google Classroom has been disconnected.");
@@ -1582,6 +2065,82 @@ function AppContent() {
             classroomStatus.connected &&
             !selectedCourse && (
               <>
+                {classroomDashboard && (
+                  <>
+                    <View style={styles.classroomDashboardHeader}>
+                      <View>
+                        <Text style={styles.sectionTitle}>Assignment overview</Text>
+                        <Text style={styles.classroomDashboardSubtext}>
+                          Your coursework across all active courses
+                        </Text>
+                      </View>
+                      <Text style={styles.classroomCount}>
+                        {classroomDashboard.summary.total_assignments} total
+                      </Text>
+                    </View>
+
+                    <View style={styles.classroomStatsGrid}>
+                      {([
+                        { label: "PENDING", value: classroomDashboard.summary.pending, tone: "purple" },
+                        { label: "OVERDUE", value: classroomDashboard.summary.overdue, tone: "red" },
+                        { label: "UPCOMING", value: classroomDashboard.summary.upcoming, tone: "blue" },
+                        { label: "COMPLETED", value: classroomDashboard.summary.completed, tone: "green" },
+                      ] as const).map((item) => (
+                        <View key={item.label} style={styles.classroomStatCard}>
+                          <Text style={styles.classroomStatValue}>{item.value}</Text>
+                          <Text style={styles.classroomStatLabel}>{item.label}</Text>
+                        </View>
+                      ))}
+                    </View>
+
+                    {([
+                      { title: "Overdue", items: classroomDashboard.overdue_assignments, empty: "No overdue assignments. Great work!" },
+                      { title: "Upcoming", items: classroomDashboard.upcoming_assignments, empty: "No upcoming deadlines." },
+                      { title: "No due date", items: classroomDashboard.no_due_date_assignments, empty: "No assignments without a due date." },
+                      { title: "Completed", items: classroomDashboard.completed_assignments, empty: "Completed assignments will appear here." },
+                      { title: "Returned", items: classroomDashboard.returned_assignments, empty: "No returned assignments." },
+                    ] as const).map((group) => (
+                      <View key={group.title} style={styles.classroomDashboardGroup}>
+                        <View style={styles.classroomSectionHeader}>
+                          <Text style={styles.sectionTitle}>{group.title}</Text>
+                          <Text style={styles.classroomCount}>{group.items.length}</Text>
+                        </View>
+                        {group.items.length === 0 ? (
+                          <Text style={styles.classroomDashboardEmpty}>{group.empty}</Text>
+                        ) : (
+                          group.items.map((assignment) => (
+                            <View key={`${group.title}-${assignment.course_id}-${assignment.id}`} style={styles.classroomDashboardAssignment}>
+                              <View style={styles.classroomDashboardAssignmentTop}>
+                                <Text numberOfLines={2} style={styles.classroomAssignmentTitle}>
+                                  {assignment.title || "Untitled assignment"}
+                                </Text>
+                                <Text style={styles.classroomDashboardStatus}>{group.title.toUpperCase()}</Text>
+                              </View>
+                              <Text style={styles.classroomAssignmentMeta}>
+                                {assignment.course_name || classroomCourses.find((course) => course.id === assignment.course_id)?.name || "Course"}
+                              </Text>
+                              <Text style={styles.classroomDueValue}>
+                                {formatDueDate(assignment.due_date, assignment.due_time)}
+                              </Text>
+                              {!!assignment.alternate_link && (
+                                <Pressable
+                                  style={styles.classroomInlineAction}
+                                  onPress={() => Linking.openURL(assignment.alternate_link!).catch(() => Alert.alert("Unable to open assignment", "The assignment link could not be opened."))}
+                                >
+                                  <Text style={styles.classroomInlineActionText}>Open in Google Classroom →</Text>
+                                </Pressable>
+                              )}
+                            </View>
+                          ))
+                        )}
+                      </View>
+                    ))}
+                    <Text style={styles.classroomSyncedAt}>
+                      Last synced: {new Date(classroomDashboard.synced_at).toLocaleString()}
+                    </Text>
+                  </>
+                )}
+
                 <View style={styles.classroomSectionHeader}>
                   <Text style={styles.sectionTitle}>Your Courses</Text>
                   <Text style={styles.classroomCount}>
@@ -1694,8 +2253,13 @@ function AppContent() {
                       {assignment.title || "Untitled assignment"}
                     </Text>
                     <Text style={styles.classroomAssignmentMeta}>
-                      {assignment.work_type || "Coursework"} · {assignment.state || "Published"}
+                      {assignment.work_type || "Coursework"} · {assignment.submission_state || assignment.state || "Published"}
                     </Text>
+                    {!!assignment.status && (
+                      <Text style={styles.classroomDashboardStatus}>
+                        {assignment.status.replaceAll("_", " ")}
+                      </Text>
+                    )}
                     {!!assignment.description && (
                       <Text style={styles.classroomAssignmentDescription}>
                         {assignment.description}
@@ -1744,6 +2308,246 @@ function AppContent() {
             MADE FOR STUDENTS, BY STUDENTS.
           </Text>
         </ScrollView>
+        {renderBottomNavigation()}
+      </SafeAreaView>
+    );
+  }
+
+  if (screen === "calendar") {
+    return (
+      <SafeAreaView style={styles.container}>
+        <StatusBar barStyle="dark-content" />
+        <AcademicCalendarScreen userId={session?.user.id || ""} />
+        {renderBottomNavigation()}
+      </SafeAreaView>
+    );
+  }
+
+  if (screen === "campusMap") {
+    return (
+      <SafeAreaView style={styles.container}>
+        <StatusBar barStyle="dark-content" />
+
+        <View style={styles.mapScreenContainer}>
+          <MapView
+            ref={mapRef}
+            style={styles.campusMap}
+            initialRegion={IITJ_CAMPUS_REGION}
+            mapType="standard"
+            showsCompass
+            showsScale
+            showsUserLocation={showUserLocation}
+            showsMyLocationButton={false}
+            toolbarEnabled
+            onPress={() => setSelectedCampusLocation(null)}
+          >
+            {filteredCampusLocations.map((campusLocation) => (
+              <Marker
+                key={campusLocation.id}
+                coordinate={{
+                  latitude: campusLocation.latitude,
+                  longitude: campusLocation.longitude,
+                }}
+                title={campusLocation.name}
+                description={campusLocation.description}
+                pinColor={CAMPUS_CATEGORY_COLORS[campusLocation.category]}
+                onPress={() => {
+                  setSelectedCampusLocation(campusLocation);
+                  mapRef.current?.animateToRegion(
+                    {
+                      latitude: campusLocation.latitude,
+                      longitude: campusLocation.longitude,
+                      latitudeDelta: 0.0035,
+                      longitudeDelta: 0.0035,
+                    },
+                    450
+                  );
+                }}
+              />
+            ))}
+          </MapView>
+
+          <View style={styles.mapTopOverlay}>
+            <View style={styles.mapHeaderRow}>
+              <View>
+                <Text style={styles.mapEyebrow}>EAOP CAMPUS EXPLORER</Text>
+                <Text style={styles.mapTitle}>IIT Jodhpur</Text>
+                <Text style={styles.mapSubtitle}>Find your way around campus.</Text>
+              </View>
+              <Pressable
+                style={styles.mapCampusButton}
+                onPress={() => {
+                  mapRef.current?.animateToRegion(IITJ_CAMPUS_REGION, 600);
+                  setSelectedCampusLocation(null);
+                }}
+                accessibilityRole="button"
+                accessibilityLabel="Show entire campus"
+              >
+                <Text style={styles.mapCampusButtonText}>Campus view</Text>
+              </Pressable>
+            </View>
+
+            <View style={styles.mapSearchBox}>
+              <Text style={styles.mapSearchIcon}>⌕</Text>
+              <TextInput
+                value={campusSearch}
+                onChangeText={(value) => {
+                  setCampusSearch(value);
+                  setSelectedCampusLocation(null);
+                }}
+                placeholder="Search library, hostel, mess..."
+                placeholderTextColor="#9995AA"
+                style={styles.mapSearchInput}
+                returnKeyType="search"
+                autoCorrect={false}
+                accessibilityLabel="Search campus locations"
+              />
+              {campusSearch.length > 0 && (
+                <Pressable onPress={() => setCampusSearch("")}>
+                  <Text style={styles.mapClearSearch}>✕</Text>
+                </Pressable>
+              )}
+            </View>
+
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.mapCategoryList}
+              keyboardShouldPersistTaps="handled"
+            >
+              {CAMPUS_CATEGORIES.map((category) => {
+                const selected = campusCategory === category;
+                return (
+                  <Pressable
+                    key={category}
+                    onPress={() => {
+                      setCampusCategory(category);
+                      setSelectedCampusLocation(null);
+                    }}
+                    style={[
+                      styles.mapCategoryChip,
+                      selected && styles.mapCategoryChipSelected,
+                    ]}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected }}
+                  >
+                    <Text
+                      style={[
+                        styles.mapCategoryChipText,
+                        selected && styles.mapCategoryChipTextSelected,
+                      ]}
+                    >
+                      {category}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+            <Text style={styles.mapResultCount}>
+              Showing {filteredCampusLocations.length} of {CAMPUS_LOCATIONS.length} places
+            </Text>
+          </View>
+
+          <View style={styles.mapFloatingControls}>
+            <Pressable
+              style={styles.mapFloatingButton}
+              onPress={handleLocateMe}
+              disabled={mapLocationLoading}
+              accessibilityRole="button"
+              accessibilityLabel="Show my current location"
+            >
+              {mapLocationLoading ? (
+                <ActivityIndicator color="#7565D8" size="small" />
+              ) : (
+                <Text style={styles.mapFloatingButtonText}>◎</Text>
+              )}
+            </Pressable>
+          </View>
+
+          {filteredCampusLocations.length === 0 && (
+            <View style={styles.mapNoResults}>
+              <Text style={styles.mapNoResultsTitle}>No places found</Text>
+              <Text style={styles.mapNoResultsText}>
+                Try another building name or category.
+              </Text>
+            </View>
+          )}
+
+          {selectedCampusLocation && (
+            <View style={styles.mapPlaceCard}>
+              <View style={styles.mapPlaceTopRow}>
+                <View
+                  style={[
+                    styles.mapPlaceCategoryDot,
+                    {
+                      backgroundColor:
+                        CAMPUS_CATEGORY_COLORS[selectedCampusLocation.category],
+                    },
+                  ]}
+                />
+                <Text style={styles.mapPlaceCategory}>
+                  {selectedCampusLocation.category.toUpperCase()}
+                </Text>
+                <Pressable
+                  onPress={() => setSelectedCampusLocation(null)}
+                  style={styles.mapPlaceClose}
+                  accessibilityLabel="Close location details"
+                >
+                  <Text style={styles.mapPlaceCloseText}>✕</Text>
+                </Pressable>
+              </View>
+              <Text style={styles.mapPlaceName}>{selectedCampusLocation.name}</Text>
+              <Text style={styles.mapPlaceDescription}>
+                {selectedCampusLocation.description}
+              </Text>
+              {!!selectedCampusLocation.coordinateNote && (
+                <Text style={styles.mapCoordinateNote}>
+                  Pin: {selectedCampusLocation.coordinateNote}
+                </Text>
+              )}
+              <Pressable
+                style={styles.mapDirectionsButton}
+                onPress={() => openCampusDirections(selectedCampusLocation)}
+                accessibilityRole="button"
+              >
+                <Text style={styles.mapDirectionsButtonText}>
+                  Get walking directions in Google Maps ↗
+                </Text>
+              </Pressable>
+            </View>
+          )}
+
+          <View style={styles.mapLegend}>
+            <View style={styles.mapLegendItem}>
+              <View style={[styles.mapLegendDot, { backgroundColor: CAMPUS_CATEGORY_COLORS.Academic }]} />
+              <Text style={styles.mapLegendText}>Academic</Text>
+            </View>
+            <View style={styles.mapLegendItem}>
+              <View style={[styles.mapLegendDot, { backgroundColor: CAMPUS_CATEGORY_COLORS.Hostels }]} />
+              <Text style={styles.mapLegendText}>Hostels</Text>
+            </View>
+            <View style={styles.mapLegendItem}>
+              <View style={[styles.mapLegendDot, { backgroundColor: CAMPUS_CATEGORY_COLORS.Food }]} />
+              <Text style={styles.mapLegendText}>Food</Text>
+            </View>
+            <View style={styles.mapLegendItem}>
+              <View style={[styles.mapLegendDot, { backgroundColor: CAMPUS_CATEGORY_COLORS.Sports }]} />
+              <Text style={styles.mapLegendText}>Sports</Text>
+            </View>
+            <View style={styles.mapLegendItem}>
+              <View style={[styles.mapLegendDot, { backgroundColor: CAMPUS_CATEGORY_COLORS.Essentials }]} />
+              <Text style={styles.mapLegendText}>Essentials</Text>
+            </View>
+            <View style={styles.mapLegendItem}>
+              <View style={[styles.mapLegendDot, { backgroundColor: CAMPUS_CATEGORY_COLORS.Landmarks }]} />
+              <Text style={styles.mapLegendText}>Landmarks</Text>
+            </View>
+          </View>
+        </View>
+        <View style={styles.mapFooter}>
+          <Text style={styles.mapFooterText}>CAMPUS LOCATIONS · IIT JODHPUR</Text>
+          <Text style={styles.mapFooterSubtext}>Select a pin to view details and directions</Text>
+        </View>
         {renderBottomNavigation()}
       </SafeAreaView>
     );
@@ -1960,13 +2764,26 @@ function AppContent() {
 
         <Pressable
           style={styles.featureCard}
+          onPress={openCalendar}
+          accessibilityRole="button"
+        >
+          <Text style={styles.featureNumber}>03</Text>
+          <Text style={styles.featureTitle}>Academic Calendar</Text>
+          <Text style={styles.featureDescription}>
+            View institute events by date and add your own reminders or plans.
+          </Text>
+          <Text style={styles.comingSoon}>OPEN CALENDAR →</Text>
+        </Pressable>
+
+        <Pressable
+          style={styles.featureCard}
           onPress={() => {
             setActiveTab("Home");
             setScreen("aboutIitJ");
           }}
           accessibilityRole="button"
         >
-          <Text style={styles.featureNumber}>03</Text>
+          <Text style={styles.featureNumber}>04</Text>
           <Text style={styles.featureTitle}>About IIT J</Text>
           <Text style={styles.featureDescription}>
             Everything about college student structure, at one place
@@ -1988,6 +2805,12 @@ function AppContent() {
 // ------------------------------------------------
 
 const styles = StyleSheet.create({
+  campusMap: {
+    flex: 1,
+    width: "100%",
+    height: "100%",
+  },
+
   container: {
     flex: 1,
     backgroundColor: "#F7F6FC",
@@ -2699,6 +3522,99 @@ const styles = StyleSheet.create({
     paddingBottom: 50,
   },
 
+  classroomDashboardHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 14,
+  },
+
+  classroomDashboardSubtext: {
+    color: "#9995AA",
+    fontSize: 11,
+    marginTop: 5,
+  },
+
+  classroomStatsGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+    marginBottom: 22,
+  },
+
+  classroomStatCard: {
+    width: "48%",
+    flexGrow: 1,
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "#EAE7F2",
+    borderRadius: 15,
+    padding: 15,
+  },
+
+  classroomStatValue: {
+    color: "#29253B",
+    fontSize: 25,
+    fontWeight: "900",
+  },
+
+  classroomStatLabel: {
+    color: "#89859B",
+    fontSize: 9,
+    fontWeight: "900",
+    letterSpacing: 1,
+    marginTop: 5,
+  },
+
+  classroomDashboardGroup: {
+    marginBottom: 20,
+  },
+
+  classroomDashboardEmpty: {
+    color: "#9995AA",
+    backgroundColor: "#FFFFFF",
+    borderRadius: 12,
+    padding: 14,
+    fontSize: 12,
+  },
+
+  classroomDashboardAssignment: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#EAE7F2",
+    padding: 14,
+    marginBottom: 9,
+  },
+
+  classroomDashboardAssignmentTop: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+
+  classroomDashboardStatus: {
+    color: "#7565D8",
+    fontSize: 8,
+    fontWeight: "900",
+    letterSpacing: 0.5,
+  },
+
+  classroomDashboardMore: {
+    color: "#7565D8",
+    fontSize: 11,
+    fontWeight: "700",
+    marginTop: 2,
+  },
+
+  classroomSyncedAt: {
+    color: "#AAA6B8",
+    fontSize: 10,
+    textAlign: "right",
+    marginBottom: 22,
+  },
+
   classroomConnectionCard: {
     backgroundColor: "#FFFFFF",
     borderRadius: 18,
@@ -2953,6 +3869,321 @@ const styles = StyleSheet.create({
     color: "#55536A",
     fontSize: 11,
     fontWeight: "700",
+  },
+
+  // CAMPUS MAP STYLES
+  mapScreenContainer: {
+    flex: 1,
+    overflow: "hidden",
+    backgroundColor: "#E9E8E4",
+  },
+
+  mapTopOverlay: {
+    position: "absolute",
+    top: 8,
+    left: 14,
+    right: 14,
+    backgroundColor: "rgba(255,255,255,0.97)",
+    borderRadius: 20,
+    padding: 15,
+    shadowColor: "#29253B",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.12,
+    shadowRadius: 12,
+    elevation: 7,
+  },
+
+  mapHeaderRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 13,
+  },
+
+  mapEyebrow: {
+    color: "#7565D8",
+    fontSize: 8,
+    fontWeight: "900",
+    letterSpacing: 1.8,
+    marginBottom: 3,
+  },
+
+  mapTitle: {
+    color: "#202033",
+    fontSize: 21,
+    fontWeight: "900",
+  },
+
+  mapSubtitle: {
+    color: "#77758A",
+    fontSize: 11,
+    marginTop: 2,
+  },
+
+  mapCampusButton: {
+    backgroundColor: "#F0EDFF",
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderRadius: 11,
+  },
+
+  mapCampusButtonText: {
+    color: "#7565D8",
+    fontSize: 10,
+    fontWeight: "800",
+  },
+
+  mapSearchBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#F7F6FC",
+    borderWidth: 1,
+    borderColor: "#EAE7F2",
+    borderRadius: 13,
+    paddingHorizontal: 12,
+    minHeight: 44,
+  },
+
+  mapSearchIcon: {
+    color: "#7565D8",
+    fontSize: 22,
+    marginRight: 8,
+  },
+
+  mapSearchInput: {
+    flex: 1,
+    color: "#202033",
+    fontSize: 12,
+    paddingVertical: 9,
+  },
+
+  mapClearSearch: {
+    color: "#9995AA",
+    padding: 5,
+    fontSize: 13,
+    fontWeight: "800",
+  },
+
+  mapCategoryList: {
+    paddingTop: 11,
+    paddingBottom: 4,
+    gap: 7,
+  },
+
+  mapCategoryChip: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "#E7E3F0",
+    backgroundColor: "#FFFFFF",
+  },
+
+  mapCategoryChipSelected: {
+    backgroundColor: "#7565D8",
+    borderColor: "#7565D8",
+  },
+
+  mapCategoryChipText: {
+    color: "#666277",
+    fontSize: 10,
+    fontWeight: "700",
+  },
+
+  mapCategoryChipTextSelected: {
+    color: "#FFFFFF",
+  },
+
+  mapResultCount: {
+    color: "#9995AA",
+    fontSize: 9,
+    marginTop: 5,
+  },
+
+  mapFloatingControls: {
+    position: "absolute",
+    right: 15,
+    top: 220,
+  },
+
+  mapFloatingButton: {
+    width: 43,
+    height: 43,
+    borderRadius: 14,
+    backgroundColor: "#FFFFFF",
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#29253B",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.13,
+    shadowRadius: 6,
+    elevation: 5,
+  },
+
+  mapFloatingButtonText: {
+    color: "#7565D8",
+    fontSize: 25,
+    fontWeight: "700",
+  },
+
+  mapNoResults: {
+    position: "absolute",
+    top: 250,
+    left: 24,
+    right: 24,
+    padding: 18,
+    borderRadius: 15,
+    backgroundColor: "#FFFFFF",
+    alignItems: "center",
+    elevation: 5,
+  },
+
+  mapNoResultsTitle: {
+    color: "#29253B",
+    fontSize: 14,
+    fontWeight: "800",
+  },
+
+  mapNoResultsText: {
+    color: "#77758A",
+    fontSize: 11,
+    marginTop: 5,
+  },
+
+  mapPlaceCard: {
+    position: "absolute",
+    left: 13,
+    right: 13,
+    bottom: 65,
+    padding: 16,
+    borderRadius: 19,
+    backgroundColor: "#FFFFFF",
+    shadowColor: "#29253B",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.16,
+    shadowRadius: 10,
+    elevation: 8,
+  },
+
+  mapPlaceTopRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+
+  mapPlaceCategoryDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 7,
+  },
+
+  mapPlaceCategory: {
+    color: "#88849A",
+    fontSize: 8,
+    fontWeight: "900",
+    letterSpacing: 1.2,
+    flex: 1,
+  },
+
+  mapPlaceClose: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+
+  mapPlaceCloseText: {
+    color: "#9995AA",
+    fontSize: 13,
+    fontWeight: "800",
+  },
+
+  mapPlaceName: {
+    color: "#202033",
+    fontSize: 15,
+    fontWeight: "900",
+    lineHeight: 21,
+  },
+
+  mapPlaceDescription: {
+    color: "#77758A",
+    fontSize: 11,
+    lineHeight: 17,
+    marginTop: 5,
+  },
+
+  mapCoordinateNote: {
+    color: "#AAA6B8",
+    fontSize: 9,
+    marginTop: 6,
+  },
+
+  mapDirectionsButton: {
+    backgroundColor: "#7565D8",
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: "center",
+    marginTop: 12,
+  },
+
+  mapDirectionsButtonText: {
+    color: "#FFFFFF",
+    fontSize: 11,
+    fontWeight: "800",
+  },
+
+  mapLegend: {
+    position: "absolute",
+    bottom: 13,
+    left: 13,
+    right: 13,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "center",
+    gap: 13,
+    paddingVertical: 9,
+    paddingHorizontal: 8,
+    borderRadius: 14,
+    backgroundColor: "rgba(255,255,255,0.95)",
+  },
+
+  mapLegendItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+  },
+
+  mapLegendDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+  },
+
+  mapLegendText: {
+    color: "#77758A",
+    fontSize: 8,
+    fontWeight: "700",
+  },
+
+  mapFooter: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    backgroundColor: "#F7F6FC",
+    borderTopWidth: 1,
+    borderTopColor: "#EAE7F2",
+    alignItems: "center",
+  },
+
+  mapFooterText: {
+    color: "#7565D8",
+    fontSize: 8,
+    fontWeight: "900",
+    letterSpacing: 1.5,
+  },
+
+  mapFooterSubtext: {
+    color: "#9995AA",
+    fontSize: 8,
+    marginTop: 2,
   },
 });
 
