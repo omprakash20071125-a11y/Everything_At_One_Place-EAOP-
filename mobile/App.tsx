@@ -21,6 +21,7 @@ import {
   SafeAreaProvider,
   SafeAreaView,
 } from "react-native-safe-area-context";
+import Svg, { Circle, G, Path } from "react-native-svg";
 
 import type { Session } from "@supabase/supabase-js";
 
@@ -54,6 +55,8 @@ type Screen =
   | "busSchedule"
   | "classroom"
   | "error";
+
+type MainTab = "Home" | "Classroom" | "Map" | "Food" | "Settings";
 
 type BusDay = "MON" | "TUE" | "WED" | "THU" | "FRI" | "SAT" | "SUN";
 
@@ -196,6 +199,100 @@ function formatDueDate(date: string | null, time: string | null): string {
   });
 }
 
+function BottomNavigationBar({
+  activeTab,
+  onTabPress,
+}: {
+  activeTab: MainTab;
+  onTabPress: (tab: MainTab) => void;
+}) {
+  const tabs: MainTab[] = ["Home", "Classroom", "Map", "Food", "Settings"];
+
+  function renderIcon(tab: MainTab, color: string) {
+    const icon = {
+      Home: (
+        <>
+          <Path d="M3 10.5 12 3l9 7.5" />
+          <Path d="M5.5 9.5V21h13V9.5M9.5 21v-6h5v6" />
+        </>
+      ),
+      Classroom: (
+        <>
+          <Path d="M3.5 5.5h5A3.5 3.5 0 0 1 12 9v11a3.5 3.5 0 0 0-3.5-3.5h-5z" />
+          <Path d="M20.5 5.5h-5A3.5 3.5 0 0 0 12 9v11a3.5 3.5 0 0 1 3.5-3.5h5z" />
+        </>
+      ),
+      Map: (
+        <>
+          <Path d="M20 10c0 5.2-8 11-8 11s-8-5.8-8-11a8 8 0 1 1 16 0Z" />
+          <Circle cx="12" cy="10" r="2.5" />
+        </>
+      ),
+      Food: (
+        <>
+          <Path d="M7 3v6M4.5 3v4a2.5 2.5 0 0 0 5 0V3M7 9v12" />
+          <Path d="M16 3v18M16 3c2.2 2 3 4.2 3 7h-3" />
+        </>
+      ),
+      Settings: (
+        <>
+          <Path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Z" />
+          <Path d="m19.4 13.5 1.2.9-1.4 2.4-1.4-.6a7.8 7.8 0 0 1-1.7 1l-.2 1.5h-2.8l-.3-1.5a7.8 7.8 0 0 1-1.7-1l-1.4.6-1.4-2.4 1.2-.9a7.1 7.1 0 0 1 0-2l-1.2-.9 1.4-2.4 1.4.6a7.8 7.8 0 0 1 1.7-1l.3-1.5h2.8l.2 1.5a7.8 7.8 0 0 1 1.7 1l1.4-.6 1.4 2.4-1.2.9a7.1 7.1 0 0 1 0 2Z" />
+        </>
+      ),
+    }[tab];
+
+    return (
+      <Svg width={22} height={22} viewBox="0 0 24 24">
+        <G
+          fill="none"
+          stroke={color}
+          strokeWidth={1.8}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          {icon}
+        </G>
+      </Svg>
+    );
+  }
+
+  return (
+    <View style={styles.bottomNav}>
+      {tabs.map((tab) => {
+        const selected = activeTab === tab;
+        const color = selected ? "#7565D8" : "#9995AA";
+
+        return (
+          <Pressable
+            key={tab}
+            onPress={() => onTabPress(tab)}
+            style={({ pressed }) => [
+              styles.bottomNavTab,
+              selected && styles.bottomNavTabSelected,
+              pressed && styles.bottomNavTabPressed,
+            ]}
+            accessibilityRole="tab"
+            accessibilityLabel={tab}
+            accessibilityState={{ selected }}
+          >
+            {renderIcon(tab, color)}
+            <Text
+              numberOfLines={1}
+              style={[
+                styles.bottomNavLabel,
+                selected && styles.bottomNavLabelSelected,
+              ]}
+            >
+              {tab}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
 // ------------------------------------------------
 // APP CONTENT
 // ------------------------------------------------
@@ -204,6 +301,7 @@ function AppContent() {
   const { width: screenWidth } = useWindowDimensions();
   const [session, setSession] = useState<Session | null>(null);
   const [screen, setScreen] = useState<Screen>("loading");
+  const [activeTab, setActiveTab] = useState<MainTab>("Home");
   const [mode, setMode] = useState<"login" | "register">("login");
 
   const [loading, setLoading] = useState(false);
@@ -243,6 +341,41 @@ function AppContent() {
   const [assignmentsLoading, setAssignmentsLoading] = useState(false);
   const [classroomError, setClassroomError] = useState("");
   const [classroomNotice, setClassroomNotice] = useState("");
+
+  function openHome() {
+    setActiveTab("Home");
+    setScreen("home");
+  }
+
+  function openClassroom() {
+    setClassroomError("");
+    setClassroomNotice("");
+    setSelectedCourse(null);
+    setClassroomAssignments([]);
+    setActiveTab("Classroom");
+    setScreen("classroom");
+  }
+
+  function handleBottomTabPress(tab: MainTab) {
+    if (tab === "Home") {
+      openHome();
+      return;
+    }
+    if (tab === "Classroom") {
+      openClassroom();
+      return;
+    }
+    setActiveTab(tab);
+  }
+
+  function renderBottomNavigation() {
+    return (
+      <BottomNavigationBar
+        activeTab={activeTab}
+        onTabPress={handleBottomTabPress}
+      />
+    );
+  }
 
   // ------------------------------------------------
   // SHARED CLASSROOM API REQUEST
@@ -1143,10 +1276,13 @@ function AppContent() {
       <SafeAreaView style={styles.container}>
         <StatusBar barStyle="dark-content" />
 
-        <ScrollView contentContainerStyle={styles.busScreenContent}>
+        <ScrollView
+          style={styles.mainScroll}
+          contentContainerStyle={styles.busScreenContent}
+        >
           <View style={styles.busHeader}>
             <Pressable
-              onPress={() => setScreen("home")}
+              onPress={openHome}
               style={styles.backButton}
             >
               <Text style={styles.backButtonText}>← Back</Text>
@@ -1309,6 +1445,7 @@ function AppContent() {
             MADE FOR STUDENTS, BY STUDENTS.
           </Text>
         </ScrollView>
+        {renderBottomNavigation()}
       </SafeAreaView>
     );
   }
@@ -1322,13 +1459,16 @@ function AppContent() {
       <SafeAreaView style={styles.container}>
         <StatusBar barStyle="dark-content" />
 
-        <ScrollView contentContainerStyle={styles.classroomScreenContent}>
+        <ScrollView
+          style={styles.mainScroll}
+          contentContainerStyle={styles.classroomScreenContent}
+        >
           <View style={styles.busHeader}>
             <Pressable
               onPress={() => {
                 setSelectedCourse(null);
                 setClassroomAssignments([]);
-                setScreen("home");
+                openHome();
               }}
               style={styles.backButton}
             >
@@ -1604,6 +1744,7 @@ function AppContent() {
             MADE FOR STUDENTS, BY STUDENTS.
           </Text>
         </ScrollView>
+        {renderBottomNavigation()}
       </SafeAreaView>
     );
   }
@@ -1612,11 +1753,14 @@ function AppContent() {
     return (
       <SafeAreaView style={styles.container}>
         <StatusBar barStyle="dark-content" />
-        <ScrollView contentContainerStyle={styles.busScreenContent}>
+        <ScrollView
+          style={styles.mainScroll}
+          contentContainerStyle={styles.busScreenContent}
+        >
           <View style={styles.busHeader}>
             <Pressable
               style={styles.backButton}
-              onPress={() => setScreen("home")}
+              onPress={openHome}
               accessibilityRole="button"
               accessibilityLabel="Back to home"
             >
@@ -1641,6 +1785,7 @@ function AppContent() {
             <Text style={styles.featureTitle}>Campus Fests</Text>
           </Pressable>
         </ScrollView>
+        {renderBottomNavigation()}
       </SafeAreaView>
     );
   }
@@ -1650,6 +1795,7 @@ function AppContent() {
       <SafeAreaView style={styles.container}>
         <StatusBar barStyle="dark-content" />
         <StudentGymkhanaTree onBack={() => setScreen("aboutIitJ")} />
+        {renderBottomNavigation()}
       </SafeAreaView>
     );
   }
@@ -1660,7 +1806,10 @@ function AppContent() {
     return (
       <SafeAreaView style={styles.container}>
         <StatusBar barStyle="dark-content" />
-        <ScrollView contentContainerStyle={styles.busScreenContent}>
+        <ScrollView
+          style={styles.mainScroll}
+          contentContainerStyle={styles.busScreenContent}
+        >
           <View style={styles.busHeader}>
             <Pressable
               style={styles.backButton}
@@ -1718,6 +1867,7 @@ function AppContent() {
             ))}
           </View>
         </ScrollView>
+        {renderBottomNavigation()}
       </SafeAreaView>
     );
   }
@@ -1726,7 +1876,10 @@ function AppContent() {
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" />
 
-      <ScrollView contentContainerStyle={styles.homeContent}>
+      <ScrollView
+        style={styles.mainScroll}
+        contentContainerStyle={styles.homeContent}
+      >
         <View style={styles.homeHeader}>
           <View>
             <Text style={styles.logo}>EAOP.</Text>
@@ -1780,7 +1933,10 @@ function AppContent() {
 
         <Pressable
           style={styles.featureCard}
-          onPress={() => setScreen("busSchedule")}
+          onPress={() => {
+            setActiveTab("Home");
+            setScreen("busSchedule");
+          }}
         >
           <Text style={styles.featureNumber}>01</Text>
           <Text style={styles.featureTitle}>Bus Schedule</Text>
@@ -1792,13 +1948,7 @@ function AppContent() {
 
         <Pressable
           style={styles.featureCard}
-          onPress={() => {
-            setClassroomError("");
-            setClassroomNotice("");
-            setSelectedCourse(null);
-            setClassroomAssignments([]);
-            setScreen("classroom");
-          }}
+          onPress={openClassroom}
         >
           <Text style={styles.featureNumber}>02</Text>
           <Text style={styles.featureTitle}>Google Classroom</Text>
@@ -1810,7 +1960,10 @@ function AppContent() {
 
         <Pressable
           style={styles.featureCard}
-          onPress={() => setScreen("aboutIitJ")}
+          onPress={() => {
+            setActiveTab("Home");
+            setScreen("aboutIitJ");
+          }}
           accessibilityRole="button"
         >
           <Text style={styles.featureNumber}>03</Text>
@@ -1825,6 +1978,7 @@ function AppContent() {
           MADE FOR STUDENTS, BY STUDENTS.
         </Text>
       </ScrollView>
+      {renderBottomNavigation()}
     </SafeAreaView>
   );
 }
@@ -1863,6 +2017,58 @@ const styles = StyleSheet.create({
   homeContent: {
     padding: 25,
     paddingBottom: 50,
+  },
+
+  mainScroll: {
+    flex: 1,
+  },
+
+  bottomNav: {
+    flexDirection: "row",
+    alignItems: "center",
+    minHeight: 64,
+    paddingHorizontal: 6,
+    paddingTop: 5,
+    paddingBottom: 4,
+    backgroundColor: "#FFFFFF",
+    borderTopWidth: 1,
+    borderTopColor: "#EAE7F2",
+    shadowColor: "#29253B",
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.07,
+    shadowRadius: 8,
+    elevation: 10,
+  },
+
+  bottomNavTab: {
+    flex: 1,
+    minWidth: 0,
+    height: 52,
+    paddingHorizontal: 2,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 3,
+  },
+
+  bottomNavTabSelected: {
+    backgroundColor: "#F0EDFF",
+  },
+
+  bottomNavTabPressed: {
+    backgroundColor: "#F7F5FF",
+    opacity: 0.85,
+  },
+
+  bottomNavLabel: {
+    color: "#9995AA",
+    fontSize: 9,
+    fontWeight: "700",
+  },
+
+  bottomNavLabelSelected: {
+    color: "#7565D8",
+    fontWeight: "900",
   },
 
   brandContainer: {
