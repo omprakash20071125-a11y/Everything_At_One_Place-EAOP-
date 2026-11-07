@@ -3,6 +3,7 @@ import React, { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Image,
   KeyboardAvoidingView,
   Linking,
   Platform,
@@ -13,6 +14,7 @@ import {
   Text,
   TextInput,
   View,
+  useWindowDimensions,
 } from "react-native";
 
 import {
@@ -23,6 +25,7 @@ import {
 import type { Session } from "@supabase/supabase-js";
 
 import { supabase } from "./src/lib/supabase";
+import StudentGymkhanaTree from "./src/components/StudentGymkhanaTree";
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, "");
 
@@ -46,6 +49,8 @@ type Screen =
   | "profile"
   | "home"
   | "aboutIitJ"
+  | "studentGymkhana"
+  | "campusFests"
   | "busSchedule"
   | "classroom"
   | "error";
@@ -114,6 +119,43 @@ const EMPTY_CLASSROOM_STATUS: ClassroomStatus = {
   scopes: [],
 };
 
+const CAMPUS_FESTIVALS = [
+  {
+    name: "Spandan",
+    image: require("./campus-fests-assets/spandan.png"),
+    overview:
+      "The official annual intra-institute, inter-hostel socio-cultural festival of IIT Jodhpur, celebrating internal student creativity, artistic expression, and hostel camaraderie.",
+    keyEvents:
+      "Features highly competitive inter-hostel tournaments across multiple fields including dance battles, music and band performances, dramatics, fashion shows, fine arts, photography, stand-up comedy, and literary quizzes—all tied to unique annual themes like Back to School.",
+  },
+  {
+    name: "IGNUS",
+    image: require("./campus-fests-assets/ignus.png"),
+    overview:
+      "The inter-college socio-cultural fest of IIT Jodhpur, celebrating creativity, intellectualism, and artistic talent.",
+    keyEvents:
+      "Features vibrant cultural competitions, Nukkad Natak, stage shows, and star musical performances by renowned artists like Shilpa Rao, Javed Ali, and Pentagram.",
+  },
+  {
+    name: "Varchas",
+    image: require("./campus-fests-assets/varchas.png"),
+    overview:
+      "The annual sports festival of IIT Jodhpur, dedicated to promoting sportsmanship and athletic excellence.",
+    keyEvents:
+      "Hosts national-level competitions across various sports, including football, cricket, basketball, tennis, badminton, volleyball, and athletics.",
+    soch:
+      "A special initiative dedicated to community welfare, debates, and raising awareness about important social issues.",
+  },
+  {
+    name: "Prometeo",
+    image: require("./campus-fests-assets/prometeo.png"),
+    overview:
+      "IIT Jodhpur’s National Technical and Entrepreneurial Festival, celebrating innovation, tech advancements, and future-forward thinking.",
+    keyEvents:
+      "Features immersive technical workshops, expert guest lectures, and exciting competitions exploring the evolution of technology and entrepreneurship.",
+  },
+];
+
 function getTodayBusDay(): BusDay {
   const days: BusDay[] = [
     "SUN",
@@ -159,6 +201,7 @@ function formatDueDate(date: string | null, time: string | null): string {
 // ------------------------------------------------
 
 function AppContent() {
+  const { width: screenWidth } = useWindowDimensions();
   const [session, setSession] = useState<Session | null>(null);
   const [screen, setScreen] = useState<Screen>("loading");
   const [mode, setMode] = useState<"login" | "register">("login");
@@ -1582,13 +1625,98 @@ function AppContent() {
             <Text style={styles.logo}>EAOP.</Text>
           </View>
 
-          <Pressable style={styles.featureCard} accessibilityRole="button">
+          <Pressable
+            style={styles.featureCard}
+            onPress={() => setScreen("studentGymkhana")}
+            accessibilityRole="button"
+          >
             <Text style={styles.featureTitle}>Student Gymkhana</Text>
           </Pressable>
 
-          <Pressable style={styles.featureCard} accessibilityRole="button">
+          <Pressable
+            style={styles.featureCard}
+            onPress={() => setScreen("campusFests")}
+            accessibilityRole="button"
+          >
             <Text style={styles.featureTitle}>Campus Fests</Text>
           </Pressable>
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
+
+  if (screen === "studentGymkhana") {
+    return (
+      <SafeAreaView style={styles.container}>
+        <StatusBar barStyle="dark-content" />
+        <StudentGymkhanaTree onBack={() => setScreen("aboutIitJ")} />
+      </SafeAreaView>
+    );
+  }
+
+  if (screen === "campusFests") {
+    const twoColumns = screenWidth >= 700;
+
+    return (
+      <SafeAreaView style={styles.container}>
+        <StatusBar barStyle="dark-content" />
+        <ScrollView contentContainerStyle={styles.busScreenContent}>
+          <View style={styles.busHeader}>
+            <Pressable
+              style={styles.backButton}
+              onPress={() => setScreen("aboutIitJ")}
+              accessibilityRole="button"
+              accessibilityLabel="Back to About IIT J"
+            >
+              <Text style={styles.backButtonText}>← Back</Text>
+            </Pressable>
+            <Text style={styles.logo}>EAOP.</Text>
+          </View>
+
+          <Text style={styles.heading}>Campus Fests</Text>
+
+          <View style={styles.festivalGrid}>
+            {CAMPUS_FESTIVALS.map((festival) => (
+              <View
+                key={festival.name}
+                style={[
+                  styles.festivalCard,
+                  { width: twoColumns ? "48.5%" : "100%" },
+                ]}
+              >
+                <View style={styles.festivalImageContainer}>
+                  <Image
+                    source={festival.image}
+                    style={styles.festivalImage}
+                    resizeMode="contain"
+                    accessible
+                    accessibilityLabel={`${festival.name} festival logo`}
+                  />
+                </View>
+                <View style={styles.festivalCardContent}>
+                  <Text style={styles.festivalName}>{festival.name}</Text>
+                  <Text style={styles.festivalSectionTitle}>Overview</Text>
+                  <Text style={styles.festivalDescription}>
+                    {festival.overview}
+                  </Text>
+                  <Text style={styles.festivalSectionTitle}>Key Events</Text>
+                  <Text style={styles.festivalDescription}>
+                    {festival.keyEvents}
+                  </Text>
+                  {festival.soch && (
+                    <>
+                      <Text style={styles.festivalSectionTitle}>
+                        Soch (Social Aspect)
+                      </Text>
+                      <Text style={styles.festivalDescription}>
+                        {festival.soch}
+                      </Text>
+                    </>
+                  )}
+                </View>
+              </View>
+            ))}
+          </View>
         </ScrollView>
       </SafeAreaView>
     );
@@ -2065,6 +2193,62 @@ const styles = StyleSheet.create({
     color: "#77758A",
     fontSize: 13,
     lineHeight: 20,
+  },
+
+  festivalGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "space-between",
+  },
+
+  festivalCard: {
+    overflow: "hidden",
+    backgroundColor: "#FFFFFF",
+    borderRadius: 18,
+    marginBottom: 18,
+    borderWidth: 1,
+    borderColor: "#EAE7F2",
+    shadowColor: "#29253B",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+
+  festivalImageContainer: {
+    height: 170,
+    backgroundColor: "#29253B",
+    padding: 12,
+  },
+
+  festivalImage: {
+    width: "100%",
+    height: "100%",
+  },
+
+  festivalCardContent: {
+    padding: 18,
+  },
+
+  festivalName: {
+    color: "#29253B",
+    fontSize: 20,
+    fontWeight: "800",
+    marginBottom: 16,
+  },
+
+  festivalSectionTitle: {
+    color: "#7565D8",
+    fontSize: 12,
+    fontWeight: "800",
+    marginTop: 10,
+    marginBottom: 5,
+  },
+
+  festivalDescription: {
+    color: "#55536A",
+    fontSize: 12,
+    lineHeight: 19,
   },
 
   comingSoon: {
